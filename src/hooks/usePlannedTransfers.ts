@@ -149,6 +149,7 @@ export function useCreatePlannedTransfer() {
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['planned-transfers'] });
       qc.invalidateQueries({ queryKey: ['planned-occurrences'] });
+      qc.invalidateQueries({ queryKey: ['account-transfers'] });
       toast.success('Transferência planejada criada');
     },
     onError: (e: any) => toast.error('Erro ao criar', { description: e.message }),
@@ -209,8 +210,13 @@ export function useExecuteOccurrence() {
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['planned-transfers'] });
       qc.invalidateQueries({ queryKey: ['planned-occurrences'] });
+      qc.invalidateQueries({ queryKey: ['account-transfers'] });
       qc.invalidateQueries({ queryKey: ['accounts'] });
       qc.invalidateQueries({ queryKey: ['accounts-snapshot'] });
+      qc.invalidateQueries({ queryKey: ['accounts-evolution'] });
+      qc.invalidateQueries({ queryKey: ['account-detail'] });
+      qc.invalidateQueries({ queryKey: ['account-annual'] });
+      qc.invalidateQueries({ queryKey: ['account-forecast'] });
       toast.success('Transferência executada');
     },
     onError: (e: any) => toast.error('Erro ao executar', { description: e.message }),

@@ -2,6 +2,16 @@ import { useMemo, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Skeleton } from '@/components/ui/skeleton';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -41,6 +51,7 @@ import {
   useDeletePlannedTransfer,
   useExecuteOccurrence,
   type PlannedTransferWithOccurrences,
+  type PlannedOccurrence,
   type PlannedFrequency,
 } from '@/hooks/usePlannedTransfers';
 import { PlannedTransferModal } from './PlannedTransferModal';
@@ -73,6 +84,12 @@ export function PlannedTransfersTab() {
   const [modalOpen, setModalOpen] = useState(false);
   const [editing, setEditing] = useState<PlannedTransferWithOccurrences | null>(null);
   const [confirmDel, setConfirmDel] = useState<PlannedTransferWithOccurrences | null>(null);
+  const [executing, setExecuting] = useState<{
+    plan: PlannedTransferWithOccurrences;
+    occurrence: PlannedOccurrence;
+  } | null>(null);
+  const [execDate, setExecDate] = useState('');
+  const [execAmount, setExecAmount] = useState('');
 
   const accMap = useMemo(() => {
     const m = new Map<string, { name: string; color: string }>();
@@ -125,6 +142,26 @@ export function PlannedTransfersTab() {
     return Array.from(grouped.entries());
   }, [data, accMap]);
 
+  const openExecute = (plan: PlannedTransferWithOccurrences, occurrence: PlannedOccurrence) => {
+    setExecuting({ plan, occurrence });
+    setExecDate(occurrence.scheduled_date || today);
+    setExecAmount(String(Number(occurrence.expected_amount) || Number(plan.amount) || ''));
+  };
+
+  const confirmExecute = () => {
+    if (!executing) return;
+    execMut.mutate(
+      {
+        occurrence_id: executing.occurrence.id,
+        real_date: execDate,
+        amount: Number(execAmount) || Number(executing.occurrence.expected_amount),
+      },
+      {
+        onSuccess: () => setExecuting(null),
+      },
+    );
+  };
+
   return (
     <div className="space-y-4">
       <div className="flex flex-wrap items-center justify-between gap-2">
@@ -171,7 +208,10 @@ export function PlannedTransfersTab() {
                 {list.map((p) => {
                   const from = accMap.get(p.from_account_id);
                   const to = accMap.get(p.to_account_id);
-                  const next = p.next_occurrence;
+                  const openOccurrences = p.occurrences
+                    .filter((o) => o.status === 'PLANEJADA' || o.status === 'ATRASADA')
+                    .sort((a, b) => a.scheduled_date.localeCompare(b.scheduled_date));
+                  const next = p.next_occurrence || openOccurrences[0];
                   const isOverdue = next && next.scheduled_date < today;
                   const total = p.occurrences.length;
                   const done = p.occurrences.filter((o) => o.status === 'EXECUTADA').length;
@@ -243,7 +283,7 @@ export function PlannedTransfersTab() {
                             variant="default"
                             className="h-8 gap-1.5"
                             disabled={execMut.isPending}
-                            onClick={() => execMut.mutate({ occurrence_id: next.id })}
+                            onClick={() => openExecute(p, next)}
                           >
                             <Zap className="w-3.5 h-3.5" /> Executar
                           </Button>
@@ -288,6 +328,40 @@ export function PlannedTransfersTab() {
                           </DropdownMenuContent>
                         </DropdownMenu>
                       </div>
+
+                      {openOccurrences.length > 0 && (
+                        <div className="basis-full border-t border-border/60 pt-2 mt-1">
+                          <div className="flex flex-wrap gap-1.5">
+                            {openOccurrences.slice(0, 5).map((occ) => {
+                              const overdue = occ.scheduled_date < today;
+                              return (
+                                <button
+                                  key={occ.id}
+                                  type="button"
+                                  onClick={() => openExecute(p, occ)}
+                                  disabled={p.status !== 'ATIVO'}
+                                  className={cn(
+                                    'inline-flex items-center gap-1 rounded-md border px-2 py-1 text-[11px] transition-colors',
+                                    overdue
+                                      ? 'border-destructive/30 bg-destructive/5 text-destructive'
+                                      : 'border-border bg-muted/30 text-muted-foreground hover:bg-muted',
+                                    p.status !== 'ATIVO' && 'cursor-not-allowed opacity-60',
+                                  )}
+                                >
+                                  <Clock className="w-3 h-3" />
+                                  {fmtDate(occ.scheduled_date)}
+                                  <span className="font-medium">{fmt(Number(occ.expected_amount))}</span>
+                                </button>
+                              );
+                            })}
+                            {openOccurrences.length > 5 && (
+                              <span className="inline-flex items-center rounded-md bg-muted/40 px-2 py-1 text-[11px] text-muted-foreground">
+                                +{openOccurrences.length - 5} futuras
+                              </span>
+                            )}
+                          </div>
+                        </div>
+                      )}
                     </div>
                   );
                 })}
@@ -302,6 +376,68 @@ export function PlannedTransfersTab() {
         onClose={() => { setModalOpen(false); setEditing(null); }}
         planned={editing}
       />
+
+      <Dialog open={!!executing} onOpenChange={(o) => !o && setExecuting(null)}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Zap className="w-5 h-5 text-primary" />
+              Executar transferencia planejada
+            </DialogTitle>
+            <DialogDescription>
+              Confirme a data e o valor real antes de gerar a transferencia entre contas.
+            </DialogDescription>
+          </DialogHeader>
+
+          {executing && (
+            <div className="space-y-4">
+              <div className="rounded-lg border border-border bg-muted/30 p-3 text-sm">
+                <p className="font-medium">
+                  {executing.plan.description || 'Transferencia planejada'}
+                </p>
+                <p className="mt-1 text-xs text-muted-foreground">
+                  {accMap.get(executing.plan.from_account_id)?.name || 'Origem'} -&gt;{' '}
+                  {accMap.get(executing.plan.to_account_id)?.name || 'Destino'}
+                </p>
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div className="space-y-1.5">
+                  <Label>Data real</Label>
+                  <Input
+                    type="date"
+                    value={execDate}
+                    onChange={(e) => setExecDate(e.target.value)}
+                  />
+                </div>
+                <div className="space-y-1.5">
+                  <Label>Valor real</Label>
+                  <Input
+                    type="number"
+                    min="0.01"
+                    step="0.01"
+                    value={execAmount}
+                    onChange={(e) => setExecAmount(e.target.value)}
+                  />
+                </div>
+              </div>
+            </div>
+          )}
+
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setExecuting(null)}>
+              Cancelar
+            </Button>
+            <Button
+              onClick={confirmExecute}
+              disabled={execMut.isPending || !execDate || Number(execAmount) <= 0}
+            >
+              <Zap className="w-4 h-4 mr-1.5" />
+              Converter em real
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       <AlertDialog open={!!confirmDel} onOpenChange={(o) => !o && setConfirmDel(null)}>
         <AlertDialogContent>
