@@ -14,21 +14,39 @@ export default function Login() {
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
 
+  const getLoginErrorMessage = (error: unknown) => {
+    const message = error instanceof Error ? error.message : String(error ?? '');
+    const normalizedMessage = message.toLowerCase();
+
+    if (normalizedMessage.includes('invalid login credentials')) {
+      return 'Credenciais inválidas. Verifique e-mail e senha.';
+    }
+
+    if (normalizedMessage.includes('email not confirmed')) {
+      return 'Seu e-mail ainda não foi confirmado.';
+    }
+
+    return 'Não foi possível entrar agora. Tente novamente em instantes.';
+  };
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!email || !password) {
+    if (!email.trim() || !password) {
       toast.error('Preencha e-mail e senha');
       return;
     }
+
     setLoading(true);
     const { error } = await signIn(email, password);
     setLoading(false);
-    if (error) toast.error('Credenciais inválidas. Verifique e-mail e senha.');
+
+    if (error) {
+      toast.error(getLoginErrorMessage(error));
+    }
   };
 
   return (
     <div className="min-h-screen w-full grid lg:grid-cols-2 bg-background">
-      {/* Brand panel */}
       <div className="relative hidden lg:flex flex-col justify-between overflow-hidden bg-gradient-mesh p-12">
         <img
           src={watermark}
@@ -46,16 +64,15 @@ export default function Login() {
             para a Ramos Engenharia.
           </h2>
           <p className="text-muted-foreground text-sm leading-relaxed">
-            Controle de receitas, despesas, contratos recorrentes e DRE em um único lugar —
+            Controle de receitas, despesas, contratos recorrentes e DRE em um único lugar,
             com a clareza visual que a sua operação merece.
           </p>
         </div>
         <p className="relative z-10 text-xs text-muted-foreground/70 tracking-wide uppercase">
-          Ramos Engenharia · Consulting & Solutions · © 2026
+          Ramos Engenharia | Consulting & Solutions | © 2026
         </p>
       </div>
 
-      {/* Form panel */}
       <div className="flex items-center justify-center p-6 sm:p-12 animate-fade-in">
         <div className="w-full max-w-sm space-y-8">
           <div className="lg:hidden flex flex-col items-center gap-3 text-center">
@@ -117,7 +134,7 @@ export default function Login() {
           </form>
 
           <p className="text-center text-[11px] text-muted-foreground tracking-wide">
-            Acesso restrito · Equipe Ramos Engenharia
+            Acesso restrito | Equipe Ramos Engenharia
           </p>
         </div>
       </div>
