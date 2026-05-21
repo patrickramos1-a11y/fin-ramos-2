@@ -50,6 +50,7 @@ import {
   ShieldCheck,
 } from 'lucide-react';
 import { getEntityIcon, getEntityColor } from '@/utils/entityIcons';
+import { getBankBrand } from '@/lib/financial/bank-brand';
 import { useAuth } from '@/hooks/useAuth';
 import { UserPermissionsView } from '@/components/settings/UserPermissionsView';
 import { 
@@ -698,19 +699,19 @@ function AccountCategoriesTab() {
         <p className="text-muted-foreground">Agrupadores para organizar as contas (ex: Bancária, Caixa, Investimentos).</p>
         <Dialog open={isDialogOpen} onOpenChange={setIsDialogOpen}>
           <DialogTrigger asChild>
-            <Button onClick={openNew}><Plus className="w-4 h-4 mr-2" />Nova Categoria</Button>
+            <Button onClick={openNew}><Plus className="w-4 h-4 mr-2" />Novo Agrupador</Button>
           </DialogTrigger>
           <DialogContent>
             <DialogHeader>
-              <DialogTitle>{editingCategory ? 'Editar Categoria' : 'Nova Categoria'}</DialogTitle>
+              <DialogTitle>{editingCategory ? 'Editar Agrupador' : 'Novo Agrupador'}</DialogTitle>
             </DialogHeader>
             <div className="space-y-4 py-4">
               <div className="space-y-2">
-                <Label>Nome</Label>
+                <Label>Nome do agrupador/banco</Label>
                 <Input 
                   value={formData.name} 
                   onChange={(e) => setFormData({ ...formData, name: e.target.value })}
-                  placeholder="Nome da categoria"
+                  placeholder="Ex: Banco Inter, XP Investimento, Binance"
                 />
               </div>
               <div className="space-y-2">
@@ -757,16 +758,20 @@ function AccountCategoriesTab() {
         </TableHeader>
         <TableBody>
           {categories?.map((category) => {
-            const CatIcon = getEntityIcon(category.name);
-            const catColor = category.color || '#6366f1';
+            const brand = getBankBrand(category.name, category.color);
+            const CatIcon = brand.icon;
+            const catColor = brand.color;
             return (
             <TableRow key={category.id}>
               <TableCell>
                 <div className="flex items-center gap-2.5">
-                  <div className="w-8 h-8 rounded-lg flex items-center justify-center shrink-0" style={{ backgroundColor: `${catColor}18` }}>
+                  <div className="w-8 h-8 rounded-lg flex items-center justify-center shrink-0" style={{ backgroundColor: brand.bg }}>
                     <CatIcon className="w-4 h-4" style={{ color: catColor }} />
                   </div>
-                  <span className="font-medium" style={{ color: catColor }}>{category.name}</span>
+                  <div>
+                    <span className="font-medium" style={{ color: catColor }}>{brand.name}</span>
+                    <p className="text-[10px] text-muted-foreground">{category.name}</p>
+                  </div>
                 </div>
               </TableCell>
               <TableCell>{category.display_order}</TableCell>

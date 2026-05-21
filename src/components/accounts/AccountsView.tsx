@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { useAccounts, type Account } from '@/hooks/useFinancialConfig';
+import { useAccounts, useAccountCategories, type Account } from '@/hooks/useFinancialConfig';
 import { useAccountsSnapshot } from '@/hooks/useAccountsSnapshot';
 import { AccountsHeader } from './AccountsHeader';
 import { AccountCard } from './AccountCard';
@@ -13,6 +13,7 @@ import { Card, CardContent } from '@/components/ui/card';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
 import { Wallet, CalendarClock, LayoutGrid } from 'lucide-react';
 import { PlannedTransfersTab } from './PlannedTransfersTab';
+import { getBankBrand } from '@/lib/financial/bank-brand';
 
 const ACCOUNTS_LAYOUT_KEY = 'fin-ramos.accounts.layout.v1';
 
@@ -42,9 +43,15 @@ export function AccountsView({ onOpenDetail }: AccountsViewProps = {}) {
   const [showHidden, setShowHidden] = useState(false);
 
   const { data: accounts, isLoading } = useAccounts();
+  const { data: accountCategories } = useAccountCategories();
   const { data: snapshots, isLoading: snapLoading } = useAccountsSnapshot(year, month);
 
   const activeAccounts = (accounts || []).filter((a) => a.active);
+  const categoryOrder = useMemo(() => {
+    const map = new Map<string, number>();
+    (accountCategories || []).forEach((category) => map.set(category.id, category.display_order ?? 999));
+    return map;
+  }, [accountCategories]);
 
   useEffect(() => {
     try {
@@ -121,19 +128,22 @@ export function AccountsView({ onOpenDetail }: AccountsViewProps = {}) {
 
   const groups = useMemo(() => {
     if (group === 'none') return [{ key: '__all', label: '', items: visible }];
-    const map = new Map<string, Account[]>();
+    const map = new Map<string, { label: string; order: number; color?: string | null; items: Account[] }>();
     visible.forEach((a) => {
-      const key = group === 'bank'
-        ? (a.bank || 'Sem banco')
-        : (a.category?.name || 'Sem categoria');
-      const arr = map.get(key) || [];
-      arr.push(a);
-      map.set(key, arr);
+      const key = a.category_id || 'sem-agrupador';
+      const current = map.get(key) || {
+        label: a.category?.name || 'Sem agrupador definido',
+        order: a.category_id ? (categoryOrder.get(a.category_id) ?? 999) : 9999,
+        color: a.category?.color,
+        items: [],
+      };
+      current.items.push(a);
+      map.set(key, current);
     });
     return Array.from(map.entries())
-      .sort((a, b) => a[0].localeCompare(b[0]))
-      .map(([key, items]) => ({ key, label: key, items }));
-  }, [visible, group]);
+      .sort((a, b) => a[1].order - b[1].order || a[1].label.localeCompare(b[1].label, 'pt-BR'))
+      .map(([key, value]) => ({ key, ...value }));
+  }, [categoryOrder, visible, group]);
 
   const ensureManualOrder = () => {
     setSort('manual');
@@ -297,12 +307,27 @@ export function AccountsView({ onOpenDetail }: AccountsViewProps = {}) {
                   (s, a) => s + (snapshots?.[a.id]?.saldo_fim_mes ?? Number(a.current_balance) ?? 0),
                   0,
                 );
+                const brand = getBankBrand(g.label, g.color);
+                const BrandIcon = brand.icon;
                 return (
                   <div key={g.key} className="space-y-2">
-                    <div className="flex items-center justify-between border-b border-border pb-1">
-                      <h4 className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">
-                        {g.label} <span className="text-foreground/60 normal-case">({g.items.length})</span>
-                      </h4>
+                    <div className="flex items-center justify-between border-b border-border pb-2">
+                      <div className="flex items-center gap-2 min-w-0">
+                        <div
+                          className="h-8 w-8 rounded-xl flex items-center justify-center shrink-0"
+                          style={{ background: brand.bg }}
+                        >
+                          <BrandIcon className="h-4 w-4" style={{ color: brand.color }} />
+                        </div>
+                        <div className="min-w-0">
+                          <h4 className="text-xs font-semibold uppercase tracking-wide truncate" style={{ color: brand.color }}>
+                            {brand.name}
+                          </h4>
+                          <p className="text-[10px] text-muted-foreground">
+                            {g.items.length} conta(s) neste agrupador
+                          </p>
+                        </div>
+                      </div>
                       <span className="text-xs font-semibold">{fmt(sub)}</span>
                     </div>
                     <div className={gridCls}>

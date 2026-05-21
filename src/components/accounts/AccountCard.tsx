@@ -1,7 +1,19 @@
-import { TrendingUp, TrendingDown, Wallet, Banknote, ArrowDownLeft, ArrowUpRight, ArrowLeftRight, Pencil, EyeOff, ArrowUp, ArrowDown } from 'lucide-react';
+import {
+  TrendingUp,
+  TrendingDown,
+  Wallet,
+  ArrowDownLeft,
+  ArrowUpRight,
+  ArrowLeftRight,
+  Pencil,
+  EyeOff,
+  ArrowUp,
+  ArrowDown,
+} from 'lucide-react';
 import { cn } from '@/lib/utils';
 import type { Account } from '@/hooks/useFinancialConfig';
 import type { AccountSnapshot } from '@/hooks/useAccountsSnapshot';
+import { getBankBrand } from '@/lib/financial/bank-brand';
 
 interface Props {
   account: Account;
@@ -41,7 +53,8 @@ export function AccountCard({
   const Trend = variacao > 0 ? TrendingUp : variacao < 0 ? TrendingDown : Wallet;
   const trendColor =
     variacao > 0 ? 'text-primary' : variacao < 0 ? 'text-destructive' : 'text-muted-foreground';
-  const color = account.category?.color || '#10b981';
+  const brand = getBankBrand(account.category?.name, account.category?.color);
+  const BrandIcon = brand.icon;
 
   return (
     <div
@@ -64,14 +77,14 @@ export function AccountCard({
         <div className="flex items-center gap-2 min-w-0">
           <div
             className="w-7 h-7 rounded-md flex items-center justify-center flex-shrink-0"
-            style={{ background: `${color}20` }}
+            style={{ background: brand.bg }}
           >
-            <Banknote className="w-4 h-4" style={{ color }} />
+            <BrandIcon className="w-4 h-4" style={{ color: brand.color }} />
           </div>
           <div className="min-w-0">
             <p className="font-semibold text-xs truncate leading-tight">{account.name}</p>
             <p className="text-[10px] text-muted-foreground truncate leading-tight">
-              {account.bank || account.category?.name || '—'}
+              {brand.shortName}
             </p>
           </div>
         </div>
@@ -122,16 +135,16 @@ export function AccountCard({
       </div>
 
       {!compact && (
-      <div className="flex items-center justify-between text-[10px] pt-1.5 border-t border-border">
-        <div className="flex items-center gap-1 text-primary">
-          <ArrowDownLeft className="w-3 h-3" />
-          <span className="font-semibold">{fmt(entradas)}</span>
+        <div className="flex items-center justify-between text-[10px] pt-1.5 border-t border-border">
+          <div className="flex items-center gap-1 text-primary">
+            <ArrowDownLeft className="w-3 h-3" />
+            <span className="font-semibold">{fmt(entradas)}</span>
+          </div>
+          <div className="flex items-center gap-1 text-destructive">
+            <ArrowUpRight className="w-3 h-3" />
+            <span className="font-semibold">{fmt(saidas)}</span>
+          </div>
         </div>
-        <div className="flex items-center gap-1 text-destructive">
-          <ArrowUpRight className="w-3 h-3" />
-          <span className="font-semibold">{fmt(saidas)}</span>
-        </div>
-      </div>
       )}
       {!compact && (trIn > 0 || trOut > 0) && (
         <div className="flex items-center justify-between text-[10px] text-muted-foreground -mt-1">

@@ -83,7 +83,7 @@ export function AccountsToolbar({
           </SelectTrigger>
           <SelectContent>
             <SelectItem value="none">Sem agrupamento</SelectItem>
-            <SelectItem value="bank">Por banco</SelectItem>
+            <SelectItem value="bank">Por agrupador</SelectItem>
             <SelectItem value="category">Por categoria</SelectItem>
           </SelectContent>
         </Select>

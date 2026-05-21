@@ -142,11 +142,14 @@ export function AccountModal({ open, onClose, account }: AccountModalProps) {
               <Input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} placeholder="Ex: Conta Inter PJ" required />
             </div>
             <div className="space-y-1.5">
-              <Label>Banco</Label>
+              <Label>Banco informado (opcional)</Label>
               <Input value={form.bank} onChange={(e) => setForm({ ...form, bank: e.target.value })} placeholder="Inter" />
+              <p className="text-[10px] text-muted-foreground">
+                A organizacao da tela usa o Agrupador abaixo, nao este campo livre.
+              </p>
             </div>
             <div className="space-y-1.5">
-              <Label>Categoria de Conta</Label>
+              <Label>Agrupador da conta</Label>
               <Select value={form.category_id || 'none'} onValueChange={(v) => setForm({ ...form, category_id: v === 'none' ? '' : v })}>
                 <SelectTrigger><SelectValue placeholder="Selecione..." /></SelectTrigger>
                 <SelectContent>
