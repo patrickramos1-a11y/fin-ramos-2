@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useAccounts, type Account } from '@/hooks/useFinancialConfig';
 import { useAccountsSnapshot } from '@/hooks/useAccountsSnapshot';
 import { AccountsHeader } from './AccountsHeader';
@@ -13,6 +13,8 @@ import { Card, CardContent } from '@/components/ui/card';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
 import { Wallet, CalendarClock, LayoutGrid } from 'lucide-react';
 import { PlannedTransfersTab } from './PlannedTransfersTab';
+
+const ACCOUNTS_LAYOUT_KEY = 'fin-ramos.accounts.layout.v1';
 
 interface AccountsViewProps {
   onOpenDetail?: (accountId: string) => void;
@@ -34,11 +36,32 @@ export function AccountsView({ onOpenDetail }: AccountsViewProps = {}) {
   const [sort, setSort] = useState<SortKey>('saldo_desc');
   const [filter, setFilter] = useState<FilterKey>('all');
   const [group, setGroup] = useState<GroupKey>('none');
+  const [manualOrder, setManualOrder] = useState<string[]>([]);
+  const [hiddenIds, setHiddenIds] = useState<string[]>([]);
+  const [compact, setCompact] = useState(false);
+  const [showHidden, setShowHidden] = useState(false);
 
   const { data: accounts, isLoading } = useAccounts();
   const { data: snapshots, isLoading: snapLoading } = useAccountsSnapshot(year, month);
 
   const activeAccounts = (accounts || []).filter((a) => a.active);
+
+  useEffect(() => {
+    try {
+      const saved = JSON.parse(localStorage.getItem(ACCOUNTS_LAYOUT_KEY) || '{}');
+      setManualOrder(Array.isArray(saved.manualOrder) ? saved.manualOrder : []);
+      setHiddenIds(Array.isArray(saved.hiddenIds) ? saved.hiddenIds : []);
+      setCompact(Boolean(saved.compact));
+      if (saved.sort) setSort(saved.sort);
+      if (saved.group) setGroup(saved.group);
+    } catch {
+      // Preferimos ignorar preferencias antigas corrompidas a travar a tela.
+    }
+  }, []);
+
+  useEffect(() => {
+    localStorage.setItem(ACCOUNTS_LAYOUT_KEY, JSON.stringify({ manualOrder, hiddenIds, compact, sort, group }));
+  }, [compact, group, hiddenIds, manualOrder, sort]);
 
   const totalSaldo = activeAccounts.reduce(
     (s, a) => s + (snapshots?.[a.id]?.saldo_fim_mes ?? Number(a.current_balance) ?? 0),
@@ -48,7 +71,7 @@ export function AccountsView({ onOpenDetail }: AccountsViewProps = {}) {
   const totalSaidas = activeAccounts.reduce((s, a) => s + (snapshots?.[a.id]?.saidas_mes ?? 0), 0);
 
   const visible = useMemo(() => {
-    let list = activeAccounts;
+    let list = activeAccounts.filter((a) => showHidden || !hiddenIds.includes(a.id));
     const s = search.trim().toLowerCase();
     if (s) {
       list = list.filter(
@@ -77,6 +100,14 @@ export function AccountsView({ onOpenDetail }: AccountsViewProps = {}) {
       const sb = snapshots?.[b.id]?.saldo_fim_mes ?? Number(b.current_balance) ?? 0;
       const ma = (snapshots?.[a.id]?.entradas_mes ?? 0) + (snapshots?.[a.id]?.saidas_mes ?? 0);
       const mb = (snapshots?.[b.id]?.entradas_mes ?? 0) + (snapshots?.[b.id]?.saidas_mes ?? 0);
+      if (sort === 'manual') {
+        const ai = manualOrder.indexOf(a.id);
+        const bi = manualOrder.indexOf(b.id);
+        if (ai !== -1 || bi !== -1) {
+          return (ai === -1 ? Number.MAX_SAFE_INTEGER : ai) - (bi === -1 ? Number.MAX_SAFE_INTEGER : bi);
+        }
+        return a.name.localeCompare(b.name);
+      }
       switch (sort) {
         case 'saldo_asc': return sa - sb;
         case 'name': return a.name.localeCompare(b.name);
@@ -86,7 +117,7 @@ export function AccountsView({ onOpenDetail }: AccountsViewProps = {}) {
       }
     });
     return list;
-  }, [activeAccounts, snapshots, search, filter, sort]);
+  }, [activeAccounts, hiddenIds, manualOrder, search, filter, sort, snapshots, showHidden]);
 
   const groups = useMemo(() => {
     if (group === 'none') return [{ key: '__all', label: '', items: visible }];
@@ -104,6 +135,47 @@ export function AccountsView({ onOpenDetail }: AccountsViewProps = {}) {
       .map(([key, items]) => ({ key, label: key, items }));
   }, [visible, group]);
 
+  const ensureManualOrder = () => {
+    setSort('manual');
+    setGroup('none');
+    setManualOrder((current) => {
+      const activeIds = activeAccounts.map((a) => a.id);
+      const known = current.filter((id) => activeIds.includes(id));
+      const missing = activeIds.filter((id) => !known.includes(id));
+      return [...known, ...missing];
+    });
+  };
+
+  const moveAccount = (accountId: string, direction: -1 | 1) => {
+    ensureManualOrder();
+    setManualOrder((current) => {
+      const activeIds = activeAccounts.map((a) => a.id);
+      const order = [...current.filter((id) => activeIds.includes(id)), ...activeIds.filter((id) => !current.includes(id))];
+      const index = order.indexOf(accountId);
+      const nextIndex = index + direction;
+      if (index < 0 || nextIndex < 0 || nextIndex >= order.length) return order;
+      [order[index], order[nextIndex]] = [order[nextIndex], order[index]];
+      return order;
+    });
+  };
+
+  const toggleHiddenAccount = (accountId: string) => {
+    setHiddenIds((current) => (
+      current.includes(accountId)
+        ? current.filter((id) => id !== accountId)
+        : [...current, accountId]
+    ));
+  };
+
+  const resetLayout = () => {
+    setManualOrder([]);
+    setHiddenIds([]);
+    setCompact(false);
+    setShowHidden(false);
+    setSort('saldo_desc');
+    setGroup('none');
+  };
+
   const renderCard = (a: Account) => (
     <AccountCard
       key={a.id}
@@ -111,10 +183,18 @@ export function AccountsView({ onOpenDetail }: AccountsViewProps = {}) {
       snapshot={snapshots?.[a.id]}
       onClick={() => onOpenDetail?.(a.id)}
       onEdit={() => { setEditingAccount(a); setAccountModalOpen(true); }}
+      compact={compact}
+      manualMode={sort === 'manual' && group === 'none'}
+      onMoveUp={() => moveAccount(a.id, -1)}
+      onMoveDown={() => moveAccount(a.id, 1)}
+      onToggleHidden={() => toggleHiddenAccount(a.id)}
+      isHidden={hiddenIds.includes(a.id)}
     />
   );
 
-  const gridCls = 'grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5 gap-2.5';
+  const gridCls = compact
+    ? 'grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-5 2xl:grid-cols-6 gap-2'
+    : 'grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5 gap-2.5';
 
   return (
     <div className="space-y-4">
@@ -179,7 +259,21 @@ export function AccountsView({ onOpenDetail }: AccountsViewProps = {}) {
             sort={sort} onSort={setSort}
             filter={filter} onFilter={setFilter}
             group={group} onGroup={setGroup}
+            hiddenCount={hiddenIds.length}
+            compact={compact}
+            onCompactChange={setCompact}
+            onShowHidden={() => setShowHidden((v) => !v)}
+            onResetLayout={resetLayout}
+            showHidden={showHidden}
           />
+
+          {sort === 'manual' && group !== 'none' && (
+            <Card>
+              <CardContent className="p-3 text-xs text-muted-foreground">
+                Para reordenar manualmente, use "Sem agrupamento". O agrupamento por banco/categoria organiza os blocos automaticamente.
+              </CardContent>
+            </Card>
+          )}
 
           {/* Grid de contas */}
           {isLoading || snapLoading ? (

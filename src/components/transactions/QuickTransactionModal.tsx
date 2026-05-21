@@ -2,6 +2,7 @@ import { useState, useMemo } from 'react';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { CurrencyInput, parseBRLToNumber } from '@/components/ui/currency-input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
@@ -86,7 +87,7 @@ export function QuickTransactionModal({
   const nfPercentual = formData.nf_percentual_aplicado 
     ? parseFloat(formData.nf_percentual_aplicado) 
     : nfPercentualPadrao;
-  const valorBruto = parseFloat(formData.valor.replace(/\./g, '').replace(',', '.')) || 0;
+  const valorBruto = parseBRLToNumber(formData.valor) || 0;
   const valorImpostoNF = isNF ? valorBruto * nfPercentual : 0;
   const valorLiquidoNF = isNF ? valorBruto - valorImpostoNF : valorBruto;
 
@@ -112,7 +113,7 @@ export function QuickTransactionModal({
   const handleClose = () => { resetForm(); onClose(); };
 
   const handleSubmit = async () => {
-    const valorTotal = parseFloat(formData.valor.replace(/\./g, '').replace(',', '.')) || 0;
+    const valorTotal = parseBRLToNumber(formData.valor) || 0;
 
     // Guard final: bloqueia órfã
     if (formData.categoria_id && !resolvedAccountId) {
@@ -228,7 +229,7 @@ export function QuickTransactionModal({
   // Conta deve estar resolvida (default da categoria ou override do usuário)
   const accountResolved = !formData.categoria_id || !!resolvedAccountId;
   const canSubmit = baseFieldsValid && entradaFieldsValid && despesaDocValid && accountResolved;
-  const valorTotal = parseFloat(formData.valor.replace(/\./g, '').replace(',', '.')) || 0;
+  const valorTotal = parseBRLToNumber(formData.valor) || 0;
   const valorParcela = enableRepetition && repetitionMode === 'parcelamento' && repetitionCount > 1
     ? Math.round((valorTotal / repetitionCount) * 100) / 100
     : valorTotal;
@@ -286,9 +287,9 @@ export function QuickTransactionModal({
           <div className="grid grid-cols-2 gap-4">
             <div>
               <Label>{enableRepetition && repetitionMode === 'parcelamento' ? 'Valor Total *' : 'Valor *'}</Label>
-              <Input 
+              <CurrencyInput
                 value={formData.valor}
-                onChange={(e) => setFormData({ ...formData, valor: e.target.value })}
+                onValueChange={(value) => setFormData({ ...formData, valor: value === null ? '' : String(value) })}
                 placeholder="0,00"
               />
             </div>

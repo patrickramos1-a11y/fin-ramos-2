@@ -9,6 +9,7 @@ import {
 } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { CurrencyInput } from '@/components/ui/currency-input';
 import { Label } from '@/components/ui/label';
 import {
   Select,
@@ -34,13 +35,13 @@ export function ConvertToTransferModal({ open, onClose, fromAccountId, transacti
   const convert = useConvertToTransfer();
 
   const [toAccountId, setToAccountId] = useState<string>('');
-  const [amount, setAmount] = useState<string>('');
+  const [amount, setAmount] = useState<number>(0);
   const [date, setDate] = useState<string>(new Date().toISOString().slice(0, 10));
   const [notes, setNotes] = useState<string>('');
 
   useEffect(() => {
     if (transaction) {
-      setAmount(String(transaction.valor_pago ?? transaction.valor ?? ''));
+      setAmount(Number(transaction.valor_pago ?? transaction.valor ?? 0));
       setDate(transaction.data_vencimento || new Date().toISOString().slice(0, 10));
       setNotes(`Convertida: ${transaction.descricao || 'despesa planejada'}`);
       setToAccountId('');
@@ -55,7 +56,7 @@ export function ConvertToTransferModal({ open, onClose, fromAccountId, transacti
       transaction_id: transaction.id,
       from_account_id: fromAccountId,
       to_account_id: toAccountId,
-      amount: Number(amount) || 0,
+      amount: amount || 0,
       transfer_date: date,
       notes,
     });
@@ -103,11 +104,9 @@ export function ConvertToTransferModal({ open, onClose, fromAccountId, transacti
           <div className="grid grid-cols-2 gap-3">
             <div>
               <Label className="text-xs">Valor</Label>
-              <Input
-                type="number"
-                step="0.01"
+              <CurrencyInput
                 value={amount}
-                onChange={(e) => setAmount(e.target.value)}
+                onValueChange={(value) => setAmount(value ?? 0)}
                 className="mt-1"
               />
             </div>
@@ -139,7 +138,7 @@ export function ConvertToTransferModal({ open, onClose, fromAccountId, transacti
           </Button>
           <Button
             onClick={handleSubmit}
-            disabled={!toAccountId || !amount || convert.isPending}
+            disabled={!toAccountId || amount <= 0 || convert.isPending}
           >
             Converter
           </Button>

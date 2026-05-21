@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { CurrencyInput } from '@/components/ui/currency-input';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Textarea } from '@/components/ui/textarea';
@@ -223,17 +224,15 @@ export function TransferModal({ open, onClose, defaultFromAccountId }: TransferM
           {/* Big value */}
           <div className="rounded-xl border border-primary/30 bg-primary/5 p-4">
             <Label className="text-xs text-muted-foreground">Valor da transferência</Label>
-            <Input
-              type="number"
-              step="0.01"
-              min="0.01"
-              value={formData.amount || ''}
-              onChange={(e) =>
-                setFormData({ ...formData, amount: parseFloat(e.target.value) || 0 })
-              }
+            <CurrencyInput
+              value={formData.amount}
+              onValueChange={(value) => setFormData({ ...formData, amount: value ?? 0 })}
               placeholder="0,00"
-              className="mt-1 text-2xl font-bold h-14 border-0 bg-transparent focus-visible:ring-0 px-0"
+              className="mt-1 text-2xl font-bold h-14 border-0 bg-transparent focus-visible:ring-0"
             />
+            <p className="mt-1 text-[11px] text-muted-foreground">
+              Digite somente os numeros: 800000 vira R$ 8.000,00 e 7801850 vira R$ 78.018,50.
+            </p>
             {negativeWarning && (
               <div className="flex items-center gap-2 mt-2 text-xs text-amber-600 dark:text-amber-400">
                 <AlertTriangle className="w-3.5 h-3.5" />

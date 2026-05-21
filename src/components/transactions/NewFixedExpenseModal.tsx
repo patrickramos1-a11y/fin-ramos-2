@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { CurrencyInput, parseBRLToNumber } from '@/components/ui/currency-input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
@@ -58,7 +59,7 @@ export function NewFixedExpenseModal({ open, onClose, defaultMonth, defaultYear 
 
   const selectedCategory = categories?.find(c => c.id === formData.categoria_id);
 
-  const valor = parseFloat(formData.valor.replace(/\./g, '').replace(',', '.')) || 0;
+  const valor = parseBRLToNumber(formData.valor) || 0;
 
   const resetForm = () => {
     setFormData({
@@ -147,9 +148,9 @@ export function NewFixedExpenseModal({ open, onClose, defaultMonth, defaultYear 
           <div className="grid grid-cols-2 gap-4">
             <div>
               <Label>Valor Mensal (R$) *</Label>
-              <Input 
+              <CurrencyInput
                 value={formData.valor}
-                onChange={(e) => setFormData({ ...formData, valor: e.target.value })}
+                onValueChange={(value) => setFormData({ ...formData, valor: value === null ? '' : String(value) })}
                 placeholder="0,00"
               />
             </div>

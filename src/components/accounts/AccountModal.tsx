@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { CurrencyInput } from '@/components/ui/currency-input';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Switch } from '@/components/ui/switch';
@@ -158,11 +159,9 @@ export function AccountModal({ open, onClose, account }: AccountModalProps) {
             </div>
             <div className="space-y-1.5">
               <Label>Saldo Inicial (R$)</Label>
-              <Input
-                type="number"
-                step="0.01"
+              <CurrencyInput
                 value={form.initial_balance}
-                onChange={(e) => setForm({ ...form, initial_balance: parseFloat(e.target.value) || 0 })}
+                onValueChange={(value) => setForm({ ...form, initial_balance: value ?? 0 })}
               />
             </div>
             <div className="flex items-center gap-2 sm:col-span-2">

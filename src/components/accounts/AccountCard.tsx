@@ -1,4 +1,4 @@
-import { TrendingUp, TrendingDown, Wallet, Banknote, ArrowDownLeft, ArrowUpRight, ArrowLeftRight, Pencil } from 'lucide-react';
+import { TrendingUp, TrendingDown, Wallet, Banknote, ArrowDownLeft, ArrowUpRight, ArrowLeftRight, Pencil, EyeOff, ArrowUp, ArrowDown } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import type { Account } from '@/hooks/useFinancialConfig';
 import type { AccountSnapshot } from '@/hooks/useAccountsSnapshot';
@@ -8,12 +8,29 @@ interface Props {
   snapshot?: AccountSnapshot;
   onClick: () => void;
   onEdit: () => void;
+  compact?: boolean;
+  manualMode?: boolean;
+  onMoveUp?: () => void;
+  onMoveDown?: () => void;
+  onToggleHidden?: () => void;
+  isHidden?: boolean;
 }
 
 const fmt = (v: number) =>
   new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(v);
 
-export function AccountCard({ account, snapshot, onClick, onEdit }: Props) {
+export function AccountCard({
+  account,
+  snapshot,
+  onClick,
+  onEdit,
+  compact = false,
+  manualMode = false,
+  onMoveUp,
+  onMoveDown,
+  onToggleHidden,
+  isHidden = false,
+}: Props) {
   const saldo = snapshot?.saldo_fim_mes ?? Number(account.current_balance) ?? 0;
   const variacao = snapshot?.variacao ?? 0;
   const entradas = snapshot?.entradas_mes ?? 0;
@@ -27,9 +44,21 @@ export function AccountCard({ account, snapshot, onClick, onEdit }: Props) {
   const color = account.category?.color || '#10b981';
 
   return (
-    <button
+    <div
+      role="button"
+      tabIndex={0}
       onClick={onClick}
-      className="text-left bg-card border border-border rounded-lg p-3 hover:shadow-md hover:border-primary/40 transition-all flex flex-col gap-2 group"
+      onKeyDown={(event) => {
+        if (event.key === 'Enter' || event.key === ' ') {
+          event.preventDefault();
+          onClick();
+        }
+      }}
+      className={cn(
+        'text-left bg-card border border-border rounded-lg p-3 hover:shadow-md hover:border-primary/40 transition-all flex flex-col gap-2 group',
+        compact && 'py-2 gap-1.5',
+        isHidden && 'opacity-60 border-dashed',
+      )}
     >
       <div className="flex items-start justify-between gap-2">
         <div className="flex items-center gap-2 min-w-0">
@@ -46,13 +75,40 @@ export function AccountCard({ account, snapshot, onClick, onEdit }: Props) {
             </p>
           </div>
         </div>
-        <button
-          onClick={(e) => { e.stopPropagation(); onEdit(); }}
-          className="text-muted-foreground hover:text-primary opacity-0 group-hover:opacity-100 transition-opacity"
-          aria-label="Editar"
-        >
-          <Pencil className="w-3 h-3" />
-        </button>
+        <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+          {manualMode && (
+            <>
+              <button
+                onClick={(e) => { e.stopPropagation(); onMoveUp?.(); }}
+                className="text-muted-foreground hover:text-primary"
+                aria-label="Mover para cima"
+              >
+                <ArrowUp className="w-3 h-3" />
+              </button>
+              <button
+                onClick={(e) => { e.stopPropagation(); onMoveDown?.(); }}
+                className="text-muted-foreground hover:text-primary"
+                aria-label="Mover para baixo"
+              >
+                <ArrowDown className="w-3 h-3" />
+              </button>
+            </>
+          )}
+          <button
+            onClick={(e) => { e.stopPropagation(); onToggleHidden?.(); }}
+            className="text-muted-foreground hover:text-amber-600"
+            aria-label={isHidden ? 'Reexibir' : 'Ocultar'}
+          >
+            <EyeOff className="w-3 h-3" />
+          </button>
+          <button
+            onClick={(e) => { e.stopPropagation(); onEdit(); }}
+            className="text-muted-foreground hover:text-primary"
+            aria-label="Editar"
+          >
+            <Pencil className="w-3 h-3" />
+          </button>
+        </div>
       </div>
 
       <div>
@@ -65,6 +121,7 @@ export function AccountCard({ account, snapshot, onClick, onEdit }: Props) {
         </div>
       </div>
 
+      {!compact && (
       <div className="flex items-center justify-between text-[10px] pt-1.5 border-t border-border">
         <div className="flex items-center gap-1 text-primary">
           <ArrowDownLeft className="w-3 h-3" />
@@ -75,7 +132,8 @@ export function AccountCard({ account, snapshot, onClick, onEdit }: Props) {
           <span className="font-semibold">{fmt(saidas)}</span>
         </div>
       </div>
-      {(trIn > 0 || trOut > 0) && (
+      )}
+      {!compact && (trIn > 0 || trOut > 0) && (
         <div className="flex items-center justify-between text-[10px] text-muted-foreground -mt-1">
           <div className="flex items-center gap-1">
             <ArrowLeftRight className="w-2.5 h-2.5" />
@@ -86,6 +144,6 @@ export function AccountCard({ account, snapshot, onClick, onEdit }: Props) {
           </span>
         </div>
       )}
-    </button>
+    </div>
   );
 }

@@ -9,6 +9,7 @@ import {
 } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { CurrencyInput } from '@/components/ui/currency-input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import {
@@ -165,13 +166,15 @@ export function PlannedTransferModal({ open, onClose, planned }: Props) {
 
           <div className="rounded-xl border border-primary/30 bg-primary/5 p-4">
             <Label className="text-xs text-muted-foreground">Valor</Label>
-            <Input
-              type="number" step="0.01" min="0.01"
-              value={form.amount || ''}
-              onChange={(e) => setForm({ ...form, amount: parseFloat(e.target.value) || 0 })}
+            <CurrencyInput
+              value={form.amount}
+              onValueChange={(value) => setForm({ ...form, amount: value ?? 0 })}
               placeholder="0,00"
-              className="mt-1 text-2xl font-bold h-12 border-0 bg-transparent focus-visible:ring-0 px-0"
+              className="mt-1 text-2xl font-bold h-12 border-0 bg-transparent focus-visible:ring-0"
             />
+            <p className="mt-1 text-[11px] text-muted-foreground">
+              Entrada por centavos: 100000 vira R$ 1.000,00.
+            </p>
           </div>
 
           <div className="grid grid-cols-2 gap-3">

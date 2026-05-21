@@ -3,6 +3,7 @@ import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Input } from '@/components/ui/input';
+import { CurrencyInput } from '@/components/ui/currency-input';
 import { Label } from '@/components/ui/label';
 import {
   Dialog,
@@ -89,7 +90,7 @@ export function PlannedTransfersTab() {
     occurrence: PlannedOccurrence;
   } | null>(null);
   const [execDate, setExecDate] = useState('');
-  const [execAmount, setExecAmount] = useState('');
+  const [execAmount, setExecAmount] = useState(0);
 
   const accMap = useMemo(() => {
     const m = new Map<string, { name: string; color: string }>();
@@ -145,7 +146,7 @@ export function PlannedTransfersTab() {
   const openExecute = (plan: PlannedTransferWithOccurrences, occurrence: PlannedOccurrence) => {
     setExecuting({ plan, occurrence });
     setExecDate(occurrence.scheduled_date || today);
-    setExecAmount(String(Number(occurrence.expected_amount) || Number(plan.amount) || ''));
+    setExecAmount(Number(occurrence.expected_amount) || Number(plan.amount) || 0);
   };
 
   const confirmExecute = () => {
@@ -154,7 +155,7 @@ export function PlannedTransfersTab() {
       {
         occurrence_id: executing.occurrence.id,
         real_date: execDate,
-        amount: Number(execAmount) || Number(executing.occurrence.expected_amount),
+        amount: execAmount || Number(executing.occurrence.expected_amount),
       },
       {
         onSuccess: () => setExecuting(null),
@@ -412,12 +413,9 @@ export function PlannedTransfersTab() {
                 </div>
                 <div className="space-y-1.5">
                   <Label>Valor real</Label>
-                  <Input
-                    type="number"
-                    min="0.01"
-                    step="0.01"
+                  <CurrencyInput
                     value={execAmount}
-                    onChange={(e) => setExecAmount(e.target.value)}
+                    onValueChange={(value) => setExecAmount(value ?? 0)}
                   />
                 </div>
               </div>
@@ -430,7 +428,7 @@ export function PlannedTransfersTab() {
             </Button>
             <Button
               onClick={confirmExecute}
-              disabled={execMut.isPending || !execDate || Number(execAmount) <= 0}
+              disabled={execMut.isPending || !execDate || execAmount <= 0}
             >
               <Zap className="w-4 h-4 mr-1.5" />
               Converter em real

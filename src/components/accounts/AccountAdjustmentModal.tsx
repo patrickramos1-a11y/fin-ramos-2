@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
+import { CurrencyInput, parseBRLToNumber } from '@/components/ui/currency-input';
 import { Label } from '@/components/ui/label';
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
@@ -29,8 +30,8 @@ export function AccountAdjustmentModal({ open, onClose, account, currentBalance 
   const [notes, setNotes] = useState('');
   const [saving, setSaving] = useState(false);
 
-  const targetNum = parseFloat(target.replace(',', '.')) || 0;
-  const deltaNum = parseFloat(delta.replace(',', '.')) || 0;
+  const targetNum = parseBRLToNumber(target) || 0;
+  const deltaNum = parseBRLToNumber(delta) || 0;
   const computedDelta = mode === 'TARGET' ? targetNum - currentBalance : deltaNum;
 
   const reset = () => {
@@ -138,23 +139,22 @@ export function AccountAdjustmentModal({ open, onClose, account, currentBalance 
           {mode === 'TARGET' ? (
             <div>
               <Label htmlFor="target">Novo saldo</Label>
-              <Input
+              <CurrencyInput
                 id="target"
-                inputMode="decimal"
                 placeholder="0,00"
                 value={target}
-                onChange={(e) => setTarget(e.target.value)}
+                onValueChange={(value) => setTarget(value === null ? '' : String(value))}
               />
             </div>
           ) : (
             <div>
               <Label htmlFor="delta">Valor do ajuste (use - para retirar)</Label>
-              <Input
+              <CurrencyInput
                 id="delta"
-                inputMode="decimal"
                 placeholder="0,00"
+                allowNegative
                 value={delta}
-                onChange={(e) => setDelta(e.target.value)}
+                onValueChange={(value) => setDelta(value === null ? '' : String(value))}
               />
             </div>
           )}

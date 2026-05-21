@@ -2,6 +2,7 @@ import { useState, useMemo } from 'react';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { CurrencyInput, parseBRLToNumber } from '@/components/ui/currency-input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
@@ -105,7 +106,7 @@ export function NewRecurringContractModal({ open, onClose, defaultYear }: NewRec
   // Calculate effective value
   const effectiveMonthlyValue = useMemo(() => {
     if (pricingModel === 'FIXED') {
-      return parseFloat(fixedValue.replace(/\./g, '').replace(',', '.')) || 0;
+      return parseBRLToNumber(fixedValue) || 0;
     }
     const factor = customFactor ? parseFloat(customFactor) : (selectedPlan?.minimum_wage_factor || 1);
     return factor * minimumWageValue;
@@ -113,7 +114,7 @@ export function NewRecurringContractModal({ open, onClose, defaultYear }: NewRec
 
   const discountedValue = useMemo(() => {
     if (!hasDiscount || !discountAmount) return effectiveMonthlyValue;
-    const amount = parseFloat(discountAmount.replace(',', '.')) || 0;
+    const amount = parseBRLToNumber(discountAmount) || 0;
     switch (discountType) {
       case 'factor': return (getEffectiveFactor() - amount) * minimumWageValue;
       case 'value': return effectiveMonthlyValue - amount;
@@ -159,7 +160,7 @@ export function NewRecurringContractModal({ open, onClose, defaultYear }: NewRec
   };
 
   const handleSubmit = async () => {
-    const discountAmountNum = parseFloat(discountAmount?.replace(',', '.') || '0') || 0;
+    const discountAmountNum = parseBRLToNumber(discountAmount) || 0;
     const discountMonthsNum = parseInt(discountMonths) || undefined;
 
     // Responsável padrão: Patrick (sócio)
@@ -173,7 +174,7 @@ export function NewRecurringContractModal({ open, onClose, defaultYear }: NewRec
         clientDocument: newClient.document || undefined,
         plan_id: pricingModel === 'SM' ? selectedPlanId || undefined : undefined,
         custom_minimum_wage_factor: customFactor ? parseFloat(customFactor) : undefined,
-        fixed_value: pricingModel === 'FIXED' ? parseFloat(fixedValue.replace(/\./g, '').replace(',', '.')) : undefined,
+        fixed_value: pricingModel === 'FIXED' ? parseBRLToNumber(fixedValue) || 0 : undefined,
         start_date: startDate,
         year,
         dia_vencimento: diaVencimento,
@@ -185,7 +186,7 @@ export function NewRecurringContractModal({ open, onClose, defaultYear }: NewRec
         client_id: selectedClientId,
         plan_id: pricingModel === 'SM' ? selectedPlanId || undefined : undefined,
         custom_minimum_wage_factor: customFactor ? parseFloat(customFactor) : undefined,
-        fixed_value: pricingModel === 'FIXED' ? parseFloat(fixedValue.replace(/\./g, '').replace(',', '.')) : undefined,
+        fixed_value: pricingModel === 'FIXED' ? parseBRLToNumber(fixedValue) || 0 : undefined,
         start_date: startDate,
         notes: notes || undefined,
         year,
@@ -430,9 +431,9 @@ export function NewRecurringContractModal({ open, onClose, defaultYear }: NewRec
               <div className="space-y-4">
                 <div>
                   <Label>Valor Fixo Mensal (R$) *</Label>
-                  <Input 
+                  <CurrencyInput
                     value={fixedValue}
-                    onChange={(e) => setFixedValue(e.target.value)}
+                    onValueChange={(value) => setFixedValue(value === null ? '' : String(value))}
                     placeholder="0,00"
                   />
                 </div>
@@ -537,11 +538,19 @@ export function NewRecurringContractModal({ open, onClose, defaultYear }: NewRec
                      discountType === 'value' ? 'Valor (R$)' : 
                      'Reduzir fator em'}
                   </Label>
-                  <Input 
-                    value={discountAmount}
-                    onChange={(e) => setDiscountAmount(e.target.value)}
-                    placeholder={discountType === 'percent' ? 'Ex: 10' : discountType === 'value' ? 'Ex: 200' : 'Ex: 0.5'}
-                  />
+                  {discountType === 'value' ? (
+                    <CurrencyInput
+                      value={discountAmount}
+                      onValueChange={(value) => setDiscountAmount(value === null ? '' : String(value))}
+                      placeholder="0,00"
+                    />
+                  ) : (
+                    <Input
+                      value={discountAmount}
+                      onChange={(e) => setDiscountAmount(e.target.value)}
+                      placeholder={discountType === 'percent' ? 'Ex: 10' : 'Ex: 0.5'}
+                    />
+                  )}
                 </div>
 
                 <div>
