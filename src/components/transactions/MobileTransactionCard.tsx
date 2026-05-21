@@ -1,6 +1,6 @@
 import { 
   ArrowDownCircle, ArrowUpCircle, CheckCircle, Clock, AlertTriangle,
-  MoreVertical, RefreshCw, FileText, Copy, Send, Trash2, Pencil, Undo2
+  MoreVertical, RefreshCw, Copy, Send, Trash2, Pencil, Undo2, ArrowRightLeft
 } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -25,6 +25,7 @@ interface MobileTransactionCardProps {
   onDelete: (t: TransactionWithClient) => void;
   onEdit: (t: TransactionWithClient) => void;
   onRevert?: (t: TransactionWithClient) => void;
+  onConvertPlanned?: (t: TransactionWithClient) => void;
 }
 
 export function MobileTransactionCard({ 
@@ -35,9 +36,11 @@ export function MobileTransactionCard({
   onDelete,
   onEdit,
   onRevert,
+  onConvertPlanned,
 }: MobileTransactionCardProps) {
   const status = statusConfig[t.status];
   const StatusIcon = status.icon;
+  const isPlannedTransfer = Boolean((t as any).is_planned_transfer);
   const isEntry = t.tipo_movimento === 'ENTRADA';
   const isRecurring = t.natureza === 'RECORRENTE';
 
@@ -48,9 +51,11 @@ export function MobileTransactionCard({
         <div className="flex items-start gap-3 flex-1 min-w-0">
           <div className={cn(
             "w-10 h-10 rounded-xl flex items-center justify-center flex-shrink-0",
-            isEntry ? "bg-income-muted" : "bg-expense-muted"
+            isPlannedTransfer ? "bg-warning/10" : isEntry ? "bg-income-muted" : "bg-expense-muted"
           )}>
-            {isEntry 
+            {isPlannedTransfer
+              ? <ArrowRightLeft className="w-5 h-5 text-warning" />
+              : isEntry 
               ? <ArrowDownCircle className="w-5 h-5 text-income" />
               : <ArrowUpCircle className="w-5 h-5 text-expense" />
             }
@@ -72,6 +77,12 @@ export function MobileTransactionCard({
                 <Badge variant="outline" className="text-[10px] px-1.5 py-0">
                   <RefreshCw className="w-3 h-3 mr-0.5" />
                   Recorrente
+                </Badge>
+              )}
+              {isPlannedTransfer && (
+                <Badge variant="outline" className="text-[10px] px-1.5 py-0 border-warning/40 text-warning">
+                  <ArrowRightLeft className="w-3 h-3 mr-0.5" />
+                  Transferencia planejada
                 </Badge>
               )}
               <span className="text-[10px] text-muted-foreground">
@@ -97,13 +108,21 @@ export function MobileTransactionCard({
               </Button>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end">
-              <DropdownMenuItem onClick={() => onEdit(t)}>
-                <Pencil className="w-4 h-4 mr-2" /> Editar
-              </DropdownMenuItem>
-              <DropdownMenuItem onClick={() => onDuplicate(t)}>
-                <Copy className="w-4 h-4 mr-2" /> Duplicar
-              </DropdownMenuItem>
-              {t.status !== 'PAGO' && (
+              {isPlannedTransfer ? (
+                <DropdownMenuItem onClick={() => onConvertPlanned?.(t)}>
+                  <ArrowRightLeft className="w-4 h-4 mr-2" /> Converter em transferencia
+                </DropdownMenuItem>
+              ) : (
+                <>
+                  <DropdownMenuItem onClick={() => onEdit(t)}>
+                    <Pencil className="w-4 h-4 mr-2" /> Editar
+                  </DropdownMenuItem>
+                  <DropdownMenuItem onClick={() => onDuplicate(t)}>
+                    <Copy className="w-4 h-4 mr-2" /> Duplicar
+                  </DropdownMenuItem>
+                </>
+              )}
+              {t.status !== 'PAGO' && !isPlannedTransfer && (
                 <DropdownMenuItem onClick={() => onMarkPaid(t)}>
                   <CheckCircle className="w-4 h-4 mr-2" /> Marcar Pago
                 </DropdownMenuItem>
@@ -118,9 +137,9 @@ export function MobileTransactionCard({
                   <Send className="w-4 h-4 mr-2" /> Enviar Cobrança
                 </DropdownMenuItem>
               )}
-              <DropdownMenuItem className="text-destructive" onClick={() => onDelete(t)}>
+              {!isPlannedTransfer && <DropdownMenuItem className="text-destructive" onClick={() => onDelete(t)}>
                 <Trash2 className="w-4 h-4 mr-2" /> Excluir
-              </DropdownMenuItem>
+              </DropdownMenuItem>}
             </DropdownMenuContent>
           </DropdownMenu>
         </div>

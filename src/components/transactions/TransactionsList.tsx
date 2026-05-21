@@ -2,6 +2,7 @@ import { useState, useMemo } from 'react';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { CurrencyInput, parseBRLToNumber } from '@/components/ui/currency-input';
 import { Badge } from '@/components/ui/badge';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
@@ -12,7 +13,7 @@ import {
   Search, ArrowUpCircle, ArrowDownCircle, MoreVertical, 
   CheckCircle, Clock, AlertTriangle, Send, Copy, Pencil, Trash2,
   RefreshCw, FileText, Loader2, DollarSign, ArrowUpDown, Settings2,
-  ArrowUp, ArrowDown, Undo2, Filter, X
+  ArrowUp, ArrowDown, Undo2, Filter, X, ArrowRightLeft, CalendarClock
 } from 'lucide-react';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
 import { 
@@ -33,6 +34,8 @@ import { MobileTransactionCard } from './MobileTransactionCard';
 import { BulkEditPanel, type BulkContext } from './BulkEditPanel';
 import { useIsMobile } from '@/hooks/use-mobile';
 import { toast } from 'sonner';
+import { usePlannedTransfers, useExecuteOccurrence, type PlannedOccurrence, type PlannedTransferWithOccurrences } from '@/hooks/usePlannedTransfers';
+import { useAccounts } from '@/hooks/useFinancialConfig';
 
 const statusConfig: Record<TransactionStatusType, { label: string; color: string; icon: React.ComponentType<{className?: string}> }> = {
   PAGO: { label: 'Pago', color: 'bg-income/10 text-income border-income/20', icon: CheckCircle },
@@ -73,6 +76,15 @@ const DOC_BADGE: Record<string, { label: string; color: string }> = {
 
 type ColumnKey = typeof ALL_COLUMNS[number]['key'];
 
+type PlannedTransactionRow = TransactionWithClient & {
+  is_planned_transfer?: boolean;
+  planned_occurrence_id?: string;
+  planned_transfer?: PlannedTransferWithOccurrences;
+  planned_occurrence?: PlannedOccurrence;
+  from_account_name?: string;
+  to_account_name?: string;
+};
+
 interface TransactionsListProps {
   filters: TransactionFilters;
   /** Define quais campos podem ser editados em massa neste contexto. */
@@ -88,6 +100,9 @@ export function TransactionsList({ filters, bulkContext = 'GERAL' }: Transaction
   const [payingTransaction, setPayingTransaction] = useState<TransactionWithClient | null>(null);
   const [payDate, setPayDate] = useState(new Date().toISOString().split('T')[0]);
   const [payValue, setPayValue] = useState('');
+  const [plannedToExecute, setPlannedToExecute] = useState<PlannedTransactionRow | null>(null);
+  const [plannedExecDate, setPlannedExecDate] = useState(new Date().toISOString().split('T')[0]);
+  const [plannedExecAmount, setPlannedExecAmount] = useState(0);
   const [sortField, setSortField] = useState<SortField>('data_vencimento');
   const [sortDir, setSortDir] = useState<SortDir>('desc');
   const [editingTransaction, setEditingTransaction] = useState<TransactionWithClient | null>(null);
@@ -112,16 +127,21 @@ export function TransactionsList({ filters, bulkContext = 'GERAL' }: Transaction
   };
 
   const { data: transactions, isLoading, error } = useTransactions(combinedFilters);
+  const { data: plannedTransfers } = usePlannedTransfers();
+  const { data: accounts } = useAccounts();
+  const executeOccurrence = useExecuteOccurrence();
   const markPaidMutation = useMarkTransactionPaid();
   const duplicateMutation = useDuplicateTransaction();
   const deleteMutation = useDeleteTransaction();
 
   // Helper: extrai o valor "filtrável" (string) de uma transação por coluna.
   const getColumnValue = (t: TransactionWithClient, col: string): string => {
+    const planned = t as PlannedTransactionRow;
     switch (col) {
       case 'tipo': return t.tipo_movimento;
       case 'cliente': return t.recurring_clients?.name || '';
       case 'natureza': {
+        if (planned.is_planned_transfer) return 'Transferencia planejada';
         if (t.tipo_movimento === 'ENTRADA') return t.natureza === 'RECORRENTE' ? 'Recorrente' : 'Avulso';
         if (t.natureza === 'RECORRENTE' || (t as any).expense_type === 'FIXA' || (t as any).category_subtype === 'FIXA') return 'Fixo';
         return 'Variável';
@@ -137,17 +157,94 @@ export function TransactionsList({ filters, bulkContext = 'GERAL' }: Transaction
   };
 
   // Sort + client-side text search + filtros por coluna (fluido, no refetch).
+  const plannedRows = useMemo((): PlannedTransactionRow[] => {
+    if (!plannedTransfers || !filters.competencia_mes || !filters.competencia_ano) return [];
+    if (filters.tipo_movimento === 'ENTRADA') return [];
+    if (filters.origem || filters.status === 'PAGO' || filters.status === 'ATRASADO') return [];
+
+    const accountMap = new Map((accounts || []).map((account) => [account.id, account.name]));
+    const month = filters.competencia_mes;
+    const year = filters.competencia_ano;
+
+    return plannedTransfers.flatMap((plan) => {
+      if (plan.status !== 'ATIVO') return [];
+      const natureza = plan.frequency === 'AVULSA' ? 'AVULSA' : 'RECORRENTE';
+      if (filters.natureza && filters.natureza !== natureza) return [];
+
+      return plan.occurrences
+        .filter((occ) => occ.status === 'PLANEJADA' || occ.status === 'ATRASADA')
+        .filter((occ) => {
+          const [occYear, occMonth] = occ.scheduled_date.split('-').map(Number);
+          return occYear === year && occMonth === month;
+        })
+        .map((occ) => {
+          const fromName = accountMap.get(plan.from_account_id) || 'Origem';
+          const toName = accountMap.get(plan.to_account_id) || 'Destino';
+          return {
+            id: `planned-${occ.id}`,
+            tipo_movimento: 'SAIDA',
+            natureza,
+            origem: 'TRANSFERENCIA_PLANEJADA',
+            cliente_id: null,
+            contrato_id: null,
+            installment_id: null,
+            fixed_expense_id: null,
+            competencia_mes: month,
+            competencia_ano: year,
+            valor: Number(occ.expected_amount) || Number(plan.amount) || 0,
+            valor_pago: null,
+            data_vencimento: occ.scheduled_date,
+            data_pagamento: null,
+            status: occ.scheduled_date < new Date().toISOString().slice(0, 10) ? 'ATRASADO' : 'EM_ABERTO',
+            descricao: plan.description || `Transferencia planejada: ${fromName} -> ${toName}`,
+            transaction_category_id: null,
+            cost_center_id: null,
+            account_id: plan.from_account_id,
+            documento_tipo: 'SEM_DOCUMENTO',
+            documento_numero: null,
+            notes: plan.notes,
+            entity_id: null,
+            origem_receita: null,
+            documento_recebimento: null,
+            responsavel_id: null,
+            nf_percentual_aplicado: null,
+            valor_imposto_nf: null,
+            valor_liquido_nf: null,
+            created_at: occ.scheduled_date,
+            updated_at: occ.scheduled_date,
+            category_name: 'Transferencia planejada',
+            category_color: '#f59e0b',
+            account_name: fromName,
+            cost_center_name: null,
+            entity_name: null,
+            responsible_name: null,
+            expense_type: null,
+            category_subtype: natureza === 'RECORRENTE' ? 'FIXA' : 'AVULSA',
+            is_planned_transfer: true,
+            planned_occurrence_id: occ.id,
+            planned_transfer: plan,
+            planned_occurrence: occ,
+            from_account_name: fromName,
+            to_account_name: toName,
+          } as PlannedTransactionRow;
+        });
+    });
+  }, [accounts, filters, plannedTransfers]);
+
+  const allRows = useMemo(() => [...(transactions || []), ...plannedRows], [plannedRows, transactions]);
+
   const sortedTransactions = useMemo(() => {
-    if (!transactions) return [];
+    if (!allRows) return [];
     const q = search.trim().toLowerCase();
     let filtered = q
-      ? transactions.filter(t =>
+      ? allRows.filter(t =>
           t.descricao?.toLowerCase().includes(q) ||
           t.recurring_clients?.name?.toLowerCase().includes(q) ||
           t.category_name?.toLowerCase().includes(q) ||
-          t.account_name?.toLowerCase().includes(q)
+          t.account_name?.toLowerCase().includes(q) ||
+          (t as PlannedTransactionRow).to_account_name?.toLowerCase().includes(q)
         )
-      : transactions;
+      : allRows;
 
     // Aplica filtros por coluna (Excel-like).
     const activeColFilters = Object.entries(columnFilters).filter(([, set]) => set.size > 0);
@@ -176,14 +273,14 @@ export function TransactionsList({ filters, bulkContext = 'GERAL' }: Transaction
       }
       return sortDir === 'asc' ? cmp : -cmp;
     });
-  }, [transactions, search, sortField, sortDir, columnFilters]);
+  }, [allRows, search, sortField, sortDir, columnFilters]);
 
   // Valores únicos por coluna calculados a partir do conjunto SEM o filtro daquela própria coluna,
   // para que o usuário sempre veja todas as opções disponíveis no popover.
   const getUniqueValuesForColumn = (col: string): string[] => {
-    if (!transactions) return [];
+    if (!allRows) return [];
     const otherFilters = Object.entries(columnFilters).filter(([k, set]) => k !== col && set.size > 0);
-    const base = transactions.filter(t =>
+    const base = allRows.filter(t =>
       otherFilters.every(([k, allowed]) => {
         const v = getColumnValue(t, k);
         return allowed.has(v === '' ? '__EMPTY__' : v);
@@ -207,6 +304,10 @@ export function TransactionsList({ filters, bulkContext = 'GERAL' }: Transaction
   };
 
   const handleOpenPay = (t: TransactionWithClient) => {
+    if ((t as PlannedTransactionRow).is_planned_transfer) {
+      handleOpenPlannedExecution(t as PlannedTransactionRow);
+      return;
+    }
     setPayingTransaction(t);
     setPayDate(new Date().toISOString().split('T')[0]);
     setPayValue(String(t.valor));
@@ -217,11 +318,33 @@ export function TransactionsList({ filters, bulkContext = 'GERAL' }: Transaction
     if (payingTransaction) {
       markPaidMutation.mutate({ 
         transactionId: payingTransaction.id,
-        valorPago: parseFloat(payValue) || undefined 
+        valorPago: parseBRLToNumber(payValue) || undefined 
       });
       setShowPayModal(false);
       setPayingTransaction(null);
     }
+  };
+
+  const handleOpenPlannedExecution = (row: PlannedTransactionRow) => {
+    setPlannedToExecute(row);
+    setPlannedExecDate(row.data_vencimento || new Date().toISOString().split('T')[0]);
+    setPlannedExecAmount(Number(row.valor) || 0);
+  };
+
+  const handleConfirmPlannedExecution = () => {
+    if (!plannedToExecute?.planned_occurrence_id) return;
+    executeOccurrence.mutate(
+      {
+        occurrence_id: plannedToExecute.planned_occurrence_id,
+        real_date: plannedExecDate,
+        amount: plannedExecAmount,
+      },
+      {
+        onSuccess: () => {
+          setPlannedToExecute(null);
+        },
+      },
+    );
   };
 
   const handleMarkPaid = (transaction: TransactionWithClient) => {
@@ -272,14 +395,15 @@ export function TransactionsList({ filters, bulkContext = 'GERAL' }: Transaction
   };
 
   const toggleSelectAll = () => {
-    if (selectedIds.size === sortedTransactions.length) {
+    if (selectedIds.size === selectableTransactions.length) {
       setSelectedIds(new Set());
     } else {
-      setSelectedIds(new Set(sortedTransactions.map(t => t.id)));
+      setSelectedIds(new Set(selectableTransactions.map(t => t.id)));
     }
   };
 
   const toggleSelect = (id: string) => {
+    if (id.startsWith('planned-')) return;
     setSelectedIds(prev => {
       const next = new Set(prev);
       if (next.has(id)) next.delete(id);
@@ -421,6 +545,7 @@ export function TransactionsList({ filters, bulkContext = 'GERAL' }: Transaction
   };
 
   const hasActiveColumnFilters = Object.values(columnFilters).some(s => s.size > 0);
+  const selectableTransactions = sortedTransactions.filter((t) => !(t as PlannedTransactionRow).is_planned_transfer);
 
   if (isLoading) {
     return (
@@ -516,7 +641,7 @@ export function TransactionsList({ filters, bulkContext = 'GERAL' }: Transaction
         <div className="flex items-center gap-2 flex-wrap mb-3 px-3 py-2 rounded-lg bg-primary/5 border border-primary/20 text-xs">
           <Filter className="w-3 h-3 text-primary" />
           <span className="font-medium">{sortedTransactions.length}</span>
-          <span className="text-muted-foreground">de {transactions?.length ?? 0} linhas após filtros de coluna</span>
+          <span className="text-muted-foreground">de {allRows.length} linhas apos filtros de coluna</span>
           {Object.entries(columnFilters).filter(([, s]) => s.size > 0).map(([col, set]) => (
             <Badge key={col} variant="outline" className="text-[10px] gap-1">
               {col}: {set.size} valor(es)
@@ -545,6 +670,7 @@ export function TransactionsList({ filters, bulkContext = 'GERAL' }: Transaction
                 onDelete={confirmDelete}
                 onEdit={setEditingTransaction}
                 onRevert={handleRevertToPending}
+                onConvertPlanned={handleOpenPlannedExecution}
               />
             ))
           ) : (
@@ -569,7 +695,7 @@ export function TransactionsList({ filters, bulkContext = 'GERAL' }: Transaction
                 size="sm"
                 variant="outline"
                 onClick={() => {
-                  const ids = sortedTransactions.filter(t => !t.responsavel_id).map(t => t.id);
+                  const ids = selectableTransactions.filter(t => !t.responsavel_id).map(t => t.id);
                   setSelectedIds(new Set(ids));
                   if (ids.length === 0) toast.info('Nenhum lançamento sem responsável nesta listagem');
                 }}
@@ -581,7 +707,7 @@ export function TransactionsList({ filters, bulkContext = 'GERAL' }: Transaction
                 size="sm"
                 variant="outline"
                 onClick={() => {
-                  const ids = sortedTransactions.filter(t => !t.entity_id).map(t => t.id);
+                  const ids = selectableTransactions.filter(t => !t.entity_id).map(t => t.id);
                   setSelectedIds(new Set(ids));
                   if (ids.length === 0) toast.info('Nenhum lançamento sem entidade nesta listagem');
                 }}
@@ -593,7 +719,7 @@ export function TransactionsList({ filters, bulkContext = 'GERAL' }: Transaction
                 size="sm"
                 variant="outline"
                 onClick={() => {
-                  const ids = sortedTransactions.filter(t => !t.documento_recebimento).map(t => t.id);
+                  const ids = selectableTransactions.filter(t => !t.documento_recebimento).map(t => t.id);
                   setSelectedIds(new Set(ids));
                   if (ids.length === 0) toast.info('Nenhum lançamento sem documento (NF) nesta listagem');
                 }}
@@ -605,7 +731,7 @@ export function TransactionsList({ filters, bulkContext = 'GERAL' }: Transaction
                 size="sm"
                 variant="outline"
                 onClick={() => {
-                  const ids = sortedTransactions.filter(t => !t.account_id).map(t => t.id);
+                  const ids = selectableTransactions.filter(t => !t.account_id).map(t => t.id);
                   setSelectedIds(new Set(ids));
                   if (ids.length === 0) toast.info('Nenhum lançamento sem conta nesta listagem');
                 }}
@@ -628,7 +754,7 @@ export function TransactionsList({ filters, bulkContext = 'GERAL' }: Transaction
                   <tr>
                     <th className="p-4 w-10">
                       <Checkbox 
-                        checked={sortedTransactions.length > 0 && selectedIds.size === sortedTransactions.length}
+                        checked={selectableTransactions.length > 0 && selectedIds.size === selectableTransactions.length}
                         onCheckedChange={toggleSelectAll}
                       />
                     </th>
@@ -704,6 +830,8 @@ export function TransactionsList({ filters, bulkContext = 'GERAL' }: Transaction
                 <tbody className="divide-y">
                   {sortedTransactions.length > 0 ? (
                     sortedTransactions.map(t => {
+                      const planned = t as PlannedTransactionRow;
+                      const isPlannedTransfer = Boolean(planned.is_planned_transfer);
                       const status = statusConfig[t.status];
                       const StatusIcon = status.icon;
                       const natureza = naturezaLabels[t.natureza];
@@ -711,6 +839,9 @@ export function TransactionsList({ filters, bulkContext = 'GERAL' }: Transaction
 
                       // Type badge
                       const getTypeBadge = () => {
+                        if (isPlannedTransfer) {
+                          return { label: 'Transf. planejada', color: 'bg-amber-100 text-amber-700 border-amber-200' };
+                        }
                         if (t.tipo_movimento === 'ENTRADA') {
                           return t.natureza === 'RECORRENTE' 
                             ? { label: 'Recorrente', color: 'bg-emerald-100 text-emerald-700 border-emerald-200' }
@@ -727,14 +858,23 @@ export function TransactionsList({ filters, bulkContext = 'GERAL' }: Transaction
                       return (
                         <tr key={t.id} className={cn("hover:bg-muted/30 transition-colors", selectedIds.has(t.id) && "bg-primary/5")}>
                           <td className="p-4">
-                            <Checkbox checked={selectedIds.has(t.id)} onCheckedChange={() => toggleSelect(t.id)} />
+                            <Checkbox
+                              disabled={isPlannedTransfer}
+                              checked={!isPlannedTransfer && selectedIds.has(t.id)}
+                              onCheckedChange={() => toggleSelect(t.id)}
+                            />
                           </td>
-                          {visibleColumns.has('tipo') && <td className="p-4">{getNatureIcon(t.tipo_movimento)}</td>}
+                          {visibleColumns.has('tipo') && (
+                            <td className="p-4">
+                              {isPlannedTransfer ? <ArrowRightLeft className="w-5 h-5 text-warning" /> : getNatureIcon(t.tipo_movimento)}
+                            </td>
+                          )}
                           {visibleColumns.has('descricao') && (
                             <td className="p-4">
                               <p className="font-medium text-sm">{t.descricao || '-'}</p>
                               <p className="text-xs text-muted-foreground">
                                 {t.competencia_mes.toString().padStart(2, '0')}/{t.competencia_ano}
+                                {isPlannedTransfer && ` • ${planned.from_account_name} -> ${planned.to_account_name}`}
                               </p>
                             </td>
                           )}
@@ -832,7 +972,7 @@ export function TransactionsList({ filters, bulkContext = 'GERAL' }: Transaction
                                   onClick={() => handleOpenPay(t)}
                                 >
                                   <DollarSign className="w-3.5 h-3.5 mr-0.5" />
-                                  Pagar
+                                  {isPlannedTransfer ? 'Converter' : 'Pagar'}
                                 </Button>
                               )}
                               <DropdownMenu>
@@ -842,13 +982,21 @@ export function TransactionsList({ filters, bulkContext = 'GERAL' }: Transaction
                                   </Button>
                                 </DropdownMenuTrigger>
                                 <DropdownMenuContent align="end">
-                                  <DropdownMenuItem onClick={() => setEditingTransaction(t)}>
-                                    <Pencil className="w-4 h-4 mr-2" /> Editar
-                                  </DropdownMenuItem>
-                                  <DropdownMenuItem onClick={() => handleDuplicate(t)}>
-                                    <Copy className="w-4 h-4 mr-2" /> Duplicar
-                                  </DropdownMenuItem>
-                                  {t.status !== 'PAGO' && (
+                                  {isPlannedTransfer ? (
+                                    <DropdownMenuItem onClick={() => handleOpenPlannedExecution(planned)}>
+                                      <ArrowRightLeft className="w-4 h-4 mr-2" /> Converter em transferência
+                                    </DropdownMenuItem>
+                                  ) : (
+                                    <>
+                                      <DropdownMenuItem onClick={() => setEditingTransaction(t)}>
+                                        <Pencil className="w-4 h-4 mr-2" /> Editar
+                                      </DropdownMenuItem>
+                                      <DropdownMenuItem onClick={() => handleDuplicate(t)}>
+                                        <Copy className="w-4 h-4 mr-2" /> Duplicar
+                                      </DropdownMenuItem>
+                                    </>
+                                  )}
+                                  {t.status !== 'PAGO' && !isPlannedTransfer && (
                                     <DropdownMenuItem onClick={() => handleOpenPay(t)}>
                                       <CheckCircle className="w-4 h-4 mr-2" /> Marcar Pago
                                     </DropdownMenuItem>
@@ -863,12 +1011,12 @@ export function TransactionsList({ filters, bulkContext = 'GERAL' }: Transaction
                                       <Send className="w-4 h-4 mr-2" /> Enviar Cobrança
                                     </DropdownMenuItem>
                                   )}
-                                  <DropdownMenuItem 
+                                  {!isPlannedTransfer && <DropdownMenuItem 
                                     className="text-destructive"
                                     onClick={() => confirmDelete(t)}
                                   >
                                     <Trash2 className="w-4 h-4 mr-2" /> Excluir
-                                  </DropdownMenuItem>
+                                  </DropdownMenuItem>}
                                 </DropdownMenuContent>
                               </DropdownMenu>
                             </div>
@@ -890,6 +1038,66 @@ export function TransactionsList({ filters, bulkContext = 'GERAL' }: Transaction
         </Card>
       )}
 
+      {/* Planned transfer execution modal */}
+      <Dialog open={!!plannedToExecute} onOpenChange={(v) => !v && setPlannedToExecute(null)}>
+        <DialogContent className="max-w-sm">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <ArrowRightLeft className="w-5 h-5 text-warning" />
+              Converter em transferência
+            </DialogTitle>
+          </DialogHeader>
+          {plannedToExecute && (
+            <div className="space-y-4">
+              <div className="p-3 rounded-lg bg-warning/10 border border-warning/20">
+                <p className="text-sm font-medium">{plannedToExecute.descricao || 'Transferencia planejada'}</p>
+                <p className="text-xs text-muted-foreground mt-1">
+                  {plannedToExecute.from_account_name} para {plannedToExecute.to_account_name}
+                </p>
+                <p className="text-lg font-bold mt-2">{formatCurrency(Number(plannedToExecute.valor))}</p>
+              </div>
+              <div>
+                <Label>Valor real</Label>
+                <CurrencyInput
+                  value={plannedExecAmount}
+                  onValueChange={(value) => setPlannedExecAmount(value ?? 0)}
+                  placeholder="0,00"
+                />
+              </div>
+              <div>
+                <Label>Data real</Label>
+                <Input
+                  type="date"
+                  value={plannedExecDate}
+                  onChange={(e) => setPlannedExecDate(e.target.value)}
+                />
+              </div>
+              <div className="rounded-lg bg-muted/50 p-3 text-xs text-muted-foreground flex gap-2">
+                <CalendarClock className="w-4 h-4 flex-shrink-0" />
+                Ao converter, o sistema cria uma saída na conta origem e uma entrada na conta destino. Não entra no DRE.
+              </div>
+              <div className="flex gap-2">
+                <Button variant="outline" onClick={() => setPlannedToExecute(null)} className="flex-1">
+                  Cancelar
+                </Button>
+                <Button
+                  onClick={handleConfirmPlannedExecution}
+                  disabled={executeOccurrence.isPending || plannedExecAmount <= 0 || !plannedExecDate}
+                  className="flex-1"
+                >
+                  {executeOccurrence.isPending ? (
+                    <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                  ) : (
+                    <ArrowRightLeft className="w-4 h-4 mr-2" />
+                  )}
+                  Converter
+                </Button>
+              </div>
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
+
       {/* Pay Modal */}
       <Dialog open={showPayModal} onOpenChange={(v) => !v && setShowPayModal(false)}>
         <DialogContent className="max-w-sm">
@@ -910,9 +1118,9 @@ export function TransactionsList({ filters, bulkContext = 'GERAL' }: Transaction
               </div>
               <div>
                 <Label>Valor Pago</Label>
-                <Input 
+                <CurrencyInput
                   value={payValue}
-                  onChange={(e) => setPayValue(e.target.value)}
+                  onValueChange={(value) => setPayValue(value === null ? '' : String(value))}
                   placeholder="0,00"
                 />
               </div>
