@@ -114,15 +114,11 @@ export function InlineLancamentoForm({ defaultMonth, defaultYear, onNeedsDedicat
     [clients]
   );
 
-  // Auto-fill description when category changes (unless user typed)
+  // Para despesas, sugere Ramos Engenharia como cliente padrão da operação,
+  // mas mantém o campo obrigatório para evitar lançamentos sem rastreio.
   useEffect(() => {
-    if (selected && !descricaoTouched) setDescricao(selected.name);
-  }, [selected, descricaoTouched]);
-
-  // Auto-set Ramos for despesa fixa selection (não se aplica aqui pois fixa redireciona, mas mantém para futuro)
-  useEffect(() => {
-    if (selected?.subtype === 'FIXA' && ramosClient && !clienteId) setClienteId(ramosClient.id);
-  }, [selected, ramosClient, clienteId]);
+    if (selected?.type === 'SAIDA' && ramosClient && !clienteId) setClienteId(ramosClient.id);
+  }, [selected?.type, ramosClient, clienteId]);
 
   const reset = () => {
     setSearch(''); setCategoryId(''); setValorNum(0); setDataVenc(today);
@@ -137,11 +133,14 @@ export function InlineLancamentoForm({ defaultMonth, defaultYear, onNeedsDedicat
 
   const fiscalRequired = isAvulsaEntrada;
   const paidRequired = status === 'PAGO';
+  const clientRequired = true;
+  const entityRequired = true;
 
   const canSubmit =
     !!selected && !needsDedicated && valorNum > 0 && !!dataVenc &&
     !!resolution.accountId &&
-    (!isEntrada || !!clienteId) &&
+    (!clientRequired || !!clienteId) &&
+    (!entityRequired || entityIds.length > 0) &&
     (!fiscalRequired || (!!origemReceita && !!documentoRecebimento)) &&
     (!paidRequired || (!!dataPagamento && !!paymentMethodId)) &&
     !!descricao.trim();
@@ -257,8 +256,19 @@ export function InlineLancamentoForm({ defaultMonth, defaultYear, onNeedsDedicat
     <Card className="border-2 border-primary/20 bg-gradient-to-br from-primary/5 to-transparent">
       <CardContent className={cn("p-4 lg:p-6", collapsed ? "space-y-0" : "space-y-4")}>
         <div className="flex items-center gap-2">
-          <div className="w-9 h-9 rounded-xl gradient-primary flex items-center justify-center">
-            <Sparkles className="w-4 h-4 text-white" />
+          <div className={cn(
+            "w-9 h-9 rounded-xl flex items-center justify-center transition-colors",
+            !selected && "bg-muted text-muted-foreground",
+            selected?.type === 'ENTRADA' && "bg-income text-white",
+            selected?.type === 'SAIDA' && "bg-expense text-white"
+          )}>
+            {selected?.type === 'ENTRADA' ? (
+              <ArrowDownCircle className="w-4 h-4" />
+            ) : selected?.type === 'SAIDA' ? (
+              <ArrowUpCircle className="w-4 h-4" />
+            ) : (
+              <Sparkles className="w-4 h-4" />
+            )}
           </div>
           <div className="flex-1 min-w-0">
             <h2 className="text-base lg:text-lg font-bold">Novo lançamento</h2>
@@ -342,13 +352,18 @@ export function InlineLancamentoForm({ defaultMonth, defaultYear, onNeedsDedicat
                 <Input type="date" value={dataVenc} onChange={(e) => setDataVenc(e.target.value)} />
               </div>
               <div>
-                <Label className="text-xs">{isEntrada ? 'Cliente *' : 'Cliente (opcional)'}</Label>
+                <Label className="text-xs">Cliente *</Label>
                 <QuickClientCombobox
                   clients={(clients || []) as any}
                   value={clienteId}
                   onChange={setClienteId}
-                  required={isEntrada}
+                  required
                 />
+                {!isEntrada && (
+                  <p className="text-[10px] text-muted-foreground mt-1">
+                    Para despesas internas, confirme Ramos Engenharia; se for reembolso/repasse, vincule o cliente correto.
+                  </p>
+                )}
               </div>
             </div>
 
@@ -381,7 +396,7 @@ export function InlineLancamentoForm({ defaultMonth, defaultYear, onNeedsDedicat
                 <Input
                   value={descricao}
                   onChange={(e) => { setDescricao(e.target.value); setDescricaoTouched(true); }}
-                  placeholder={selected.name}
+                  placeholder="Descreva o lançamento"
                   className={!descricao.trim() ? 'border-destructive' : ''}
                 />
               </div>
@@ -495,13 +510,18 @@ export function InlineLancamentoForm({ defaultMonth, defaultYear, onNeedsDedicat
               </div>
             </div>
 
-            {/* Entidade (opcional aqui — fluxo rápido) */}
+            {/* Entidade obrigatória para rastreamento operacional */}
             <div>
               <MultiEntitySelector
                 selectedIds={entityIds}
                 onChange={setEntityIds}
-                label={isEntrada ? 'Vinculado a (Entidade)' : 'Entidade vinculada (opcional)'}
+                label="Grupo / entidade de rastreamento *"
               />
+              {entityIds.length === 0 && (
+                <p className="text-[10px] text-destructive mt-1">
+                  Informe se corresponde a um grupo/pessoa, ao cliente ou à própria Ramos Engenharia.
+                </p>
+              )}
             </div>
 
             {/* Parcelamento — só para despesa variável */}

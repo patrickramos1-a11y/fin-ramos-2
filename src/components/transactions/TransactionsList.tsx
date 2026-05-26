@@ -61,7 +61,6 @@ const ALL_COLUMNS = [
   { key: 'categoria', label: 'Categoria', default: true },
   { key: 'conta', label: 'Conta', default: true },
   { key: 'centro_custo', label: 'C. Custo', default: false },
-  { key: 'responsavel', label: 'Responsável', default: true },
   { key: 'nf', label: 'NF / Doc.', default: true },
   { key: 'vencimento', label: 'Vencimento', default: true },
   { key: 'status', label: 'Status', default: true },
@@ -777,18 +776,6 @@ export function TransactionsList({ filters, bulkContext = 'GERAL' }: Transaction
                 size="sm"
                 variant="outline"
                 onClick={() => {
-                  const ids = selectableTransactions.filter(t => !t.responsavel_id).map(t => t.id);
-                  setSelectedIds(new Set(ids));
-                  if (ids.length === 0) toast.info('Nenhum lançamento sem responsável nesta listagem');
-                }}
-                className="h-7 text-xs"
-              >
-                Selecionar sem Responsável
-              </Button>
-              <Button
-                size="sm"
-                variant="outline"
-                onClick={() => {
                   const ids = selectableTransactions.filter(t => !t.entity_id).map(t => t.id);
                   setSelectedIds(new Set(ids));
                   if (ids.length === 0) toast.info('Nenhum lançamento sem entidade nesta listagem');
@@ -875,11 +862,6 @@ export function TransactionsList({ filters, bulkContext = 'GERAL' }: Transaction
                     {visibleColumns.has('centro_custo') && (
                       <th className="text-left p-4 text-sm font-medium">
                         <span className="inline-flex items-center">C. Custo<ColumnFilter col="centro_custo" label="Centro de Custo" /></span>
-                      </th>
-                    )}
-                    {visibleColumns.has('responsavel') && (
-                      <th className="text-left p-4 text-sm font-medium">
-                        <span className="inline-flex items-center">Responsável<ColumnFilter col="responsavel" label="Responsável" /></span>
                       </th>
                     )}
                     {visibleColumns.has('nf') && (
@@ -999,11 +981,6 @@ export function TransactionsList({ filters, bulkContext = 'GERAL' }: Transaction
                           {visibleColumns.has('centro_custo') && (
                             <td className="p-4">
                               <span className="text-xs text-muted-foreground">{t.cost_center_name || 'Não vinculado'}</span>
-                            </td>
-                          )}
-                          {visibleColumns.has('responsavel') && (
-                            <td className="p-4">
-                              <span className="text-xs text-muted-foreground">{t.responsible_name || t.entity_name || '-'}</span>
                             </td>
                           )}
                           {visibleColumns.has('nf') && (
