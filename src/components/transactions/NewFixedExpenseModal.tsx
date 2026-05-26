@@ -26,6 +26,9 @@ interface NewFixedExpenseModalProps {
 
 export function NewFixedExpenseModal({ open, onClose, defaultMonth, defaultYear }: NewFixedExpenseModalProps) {
   const currentYear = defaultYear || new Date().getFullYear();
+  const currentMonth = defaultMonth || new Date().getMonth() + 1;
+  const defaultStartDate = `${currentYear}-${String(currentMonth).padStart(2, '0')}-01`;
+  const defaultEndDate = new Date(currentYear, currentMonth, 0).toISOString().split('T')[0];
 
   const [formData, setFormData] = useState({
     nome: '',
@@ -34,12 +37,13 @@ export function NewFixedExpenseModal({ open, onClose, defaultMonth, defaultYear 
     categoria_id: '',
     forma_pagamento_id: '',
     cliente_id: '',
-    data_inicio: `${currentYear}-01-01`,
-    data_fim: '',
+    data_inicio: defaultStartDate,
+    data_fim: defaultEndDate,
     notes: '',
     documento_tipo: '' as string,
     account_id_override: '' as string, // usado quando categoria não tem default_account_id
   });
+  const [scheduleMode, setScheduleMode] = useState<'single' | 'recurring'>('single');
 
   const [entityIds, setEntityIds] = useState<string[]>([]);
   const [filterAccountId, setFilterAccountId] = useState('');
@@ -65,10 +69,11 @@ export function NewFixedExpenseModal({ open, onClose, defaultMonth, defaultYear 
     setFormData({
       nome: '', valor: '', dia_vencimento: 10, categoria_id: '',
       forma_pagamento_id: '', cliente_id: '',
-      data_inicio: `${currentYear}-01-01`, data_fim: '', notes: '',
+      data_inicio: defaultStartDate, data_fim: defaultEndDate, notes: '',
       documento_tipo: '',
       account_id_override: '',
     });
+    setScheduleMode('single');
     setEntityIds([]);
     setFilterAccountId('');
     setFilterCostCenterId('');
@@ -97,7 +102,7 @@ export function NewFixedExpenseModal({ open, onClose, defaultMonth, defaultYear 
       payment_method_id: formData.forma_pagamento_id || null,
       cliente_id: formData.cliente_id || null,
       data_inicio: formData.data_inicio,
-      data_fim: formData.data_fim || null,
+      data_fim: scheduleMode === 'single' ? formData.data_fim : formData.data_fim || null,
       notes: formData.notes || null,
     });
 
@@ -109,8 +114,12 @@ export function NewFixedExpenseModal({ open, onClose, defaultMonth, defaultYear 
       });
     }
 
-    // Generate transactions
-    for (let m = 1; m <= 12; m++) {
+    // Gera somente as competências cobertas pelo período escolhido.
+    const start = new Date(`${formData.data_inicio}T00:00:00`);
+    const end = formData.data_fim ? new Date(`${formData.data_fim}T00:00:00`) : new Date(currentYear, 11, 31);
+    const startMonth = start.getFullYear() === currentYear ? start.getMonth() + 1 : 1;
+    const endMonth = end.getFullYear() === currentYear ? end.getMonth() + 1 : 12;
+    for (let m = Math.max(1, startMonth); m <= Math.min(12, endMonth); m++) {
       await generateTransactions.mutateAsync({ year: currentYear, month: m });
     }
 
@@ -120,9 +129,11 @@ export function NewFixedExpenseModal({ open, onClose, defaultMonth, defaultYear 
   const isSubmitting = createFixedExpense.isPending || generateTransactions.isPending;
   const canSubmit = formData.nome.trim().length > 0 && valor > 0 && formData.dia_vencimento >= 1 && formData.dia_vencimento <= 31 && formData.categoria_id.length > 0 && formData.forma_pagamento_id.length > 0 && formData.cliente_id.length > 0 && entityIds.length > 0 && formData.documento_tipo.length > 0 && !!effectiveAccountId;
 
-  const startDate = new Date(formData.data_inicio);
-  const startMonth = startDate.getMonth() + 1;
-  const monthsInYear = 12 - startMonth + 1;
+  const startDate = new Date(`${formData.data_inicio}T00:00:00`);
+  const endDate = formData.data_fim ? new Date(`${formData.data_fim}T00:00:00`) : new Date(currentYear, 11, 31);
+  const startMonth = startDate.getFullYear() === currentYear ? startDate.getMonth() + 1 : 1;
+  const endMonth = endDate.getFullYear() === currentYear ? endDate.getMonth() + 1 : 12;
+  const monthsInYear = scheduleMode === 'single' ? 1 : Math.max(1, endMonth - startMonth + 1);
   const annualProjection = valor * monthsInYear;
 
   return (
@@ -242,16 +253,56 @@ export function NewFixedExpenseModal({ open, onClose, defaultMonth, defaultYear 
               <Label>Data de Início</Label>
               <Input 
                 type="date" value={formData.data_inicio}
-                onChange={(e) => setFormData({ ...formData, data_inicio: e.target.value })}
+                onChange={(e) => {
+                  const value = e.target.value;
+                  const date = value ? new Date(`${value}T00:00:00`) : null;
+                  const singleEnd = date ? new Date(date.getFullYear(), date.getMonth() + 1, 0).toISOString().split('T')[0] : formData.data_fim;
+                  setFormData({ ...formData, data_inicio: value, data_fim: scheduleMode === 'single' ? singleEnd : formData.data_fim });
+                }}
               />
             </div>
             <div>
-              <Label>Data de Fim (opcional)</Label>
+              <Label>{scheduleMode === 'single' ? 'Data de Fim' : 'Data de Fim (opcional)'}</Label>
               <Input 
                 type="date" value={formData.data_fim}
+                disabled={scheduleMode === 'single'}
                 onChange={(e) => setFormData({ ...formData, data_fim: e.target.value })}
               />
             </div>
+          </div>
+
+          <div className="rounded-lg border bg-muted/30 p-3 space-y-2">
+            <Label>Como lançar?</Label>
+            <div className="grid grid-cols-2 gap-2">
+              <Button
+                type="button"
+                variant={scheduleMode === 'single' ? 'default' : 'outline'}
+                onClick={() => {
+                  const date = formData.data_inicio ? new Date(`${formData.data_inicio}T00:00:00`) : new Date(currentYear, currentMonth - 1, 1);
+                  setScheduleMode('single');
+                  setFormData({
+                    ...formData,
+                    data_inicio: formData.data_inicio || defaultStartDate,
+                    data_fim: new Date(date.getFullYear(), date.getMonth() + 1, 0).toISOString().split('T')[0],
+                  });
+                }}
+              >
+                Pontual
+              </Button>
+              <Button
+                type="button"
+                variant={scheduleMode === 'recurring' ? 'default' : 'outline'}
+                onClick={() => {
+                  setScheduleMode('recurring');
+                  setFormData({ ...formData, data_fim: '' });
+                }}
+              >
+                Recorrente
+              </Button>
+            </div>
+            <p className="text-xs text-muted-foreground">
+              Pontual cria somente a competência selecionada. Recorrente gera os meses dentro do período informado.
+            </p>
           </div>
 
           <div>
@@ -279,7 +330,7 @@ export function NewFixedExpenseModal({ open, onClose, defaultMonth, defaultYear 
                   <span>Todo dia {formData.dia_vencimento}</span>
                 </div>
                 <div className="flex justify-between">
-                  <span className="text-muted-foreground">Projeção Anual:</span>
+                  <span className="text-muted-foreground">Projeção:</span>
                   <span className="font-medium">{formatCurrency(annualProjection)}</span>
                 </div>
                 {entityIds.length > 0 && (

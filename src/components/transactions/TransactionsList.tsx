@@ -36,6 +36,8 @@ import { useIsMobile } from '@/hooks/use-mobile';
 import { toast } from 'sonner';
 import { usePlannedTransfers, useExecuteOccurrence, type PlannedOccurrence, type PlannedTransferWithOccurrences } from '@/hooks/usePlannedTransfers';
 import { useAccounts } from '@/hooks/useFinancialConfig';
+import { supabase } from '@/integrations/supabase/client';
+import { useQueryClient } from '@tanstack/react-query';
 
 const statusConfig: Record<TransactionStatusType, { label: string; color: string; icon: React.ComponentType<{className?: string}> }> = {
   PAGO: { label: 'Pago', color: 'bg-income/10 text-income border-income/20', icon: CheckCircle },
@@ -95,6 +97,7 @@ export function TransactionsList({ filters, bulkContext = 'GERAL' }: Transaction
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState<string>('all');
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+  const [showFixedDeleteOptions, setShowFixedDeleteOptions] = useState(false);
   const [deletingTransaction, setDeletingTransaction] = useState<TransactionWithClient | null>(null);
   const [showPayModal, setShowPayModal] = useState(false);
   const [payingTransaction, setPayingTransaction] = useState<TransactionWithClient | null>(null);
@@ -116,6 +119,7 @@ export function TransactionsList({ filters, bulkContext = 'GERAL' }: Transaction
   // "__EMPTY__" é o valor sentinel para representar células vazias/nulas.
   const [columnFilters, setColumnFilters] = useState<Record<string, Set<string>>>({});
   const isMobile = useIsMobile();
+  const queryClient = useQueryClient();
   const updateMutation = useUpdateTransaction();
 
   // Note: `search` is intentionally NOT passed into useTransactions to avoid
@@ -361,7 +365,11 @@ export function TransactionsList({ filters, bulkContext = 'GERAL' }: Transaction
 
   const confirmDelete = (transaction: TransactionWithClient) => {
     setDeletingTransaction(transaction);
-    setShowDeleteConfirm(true);
+    if (transaction.fixed_expense_id) {
+      setShowFixedDeleteOptions(true);
+    } else {
+      setShowDeleteConfirm(true);
+    }
   };
 
   const handleDelete = () => {
@@ -399,6 +407,80 @@ export function TransactionsList({ filters, bulkContext = 'GERAL' }: Transaction
       setSelectedIds(new Set());
     } else {
       setSelectedIds(new Set(selectableTransactions.map(t => t.id)));
+    }
+  };
+
+  const refreshAfterDelete = async () => {
+    await Promise.all([
+      queryClient.invalidateQueries({ queryKey: ['transactions'] }),
+      queryClient.invalidateQueries({ queryKey: ['fixed_expenses'] }),
+      queryClient.invalidateQueries({ queryKey: ['open-payments'] }),
+      queryClient.invalidateQueries({ queryKey: ['approval-transactions'] }),
+      queryClient.invalidateQueries({ queryKey: ['pending-approval-count'] }),
+    ]);
+  };
+
+  const closeFixedDeleteOptions = () => {
+    setShowFixedDeleteOptions(false);
+    setDeletingTransaction(null);
+  };
+
+  const handleFixedExpenseDelete = async (mode: 'single' | 'future' | 'all') => {
+    if (!deletingTransaction?.fixed_expense_id) return;
+
+    const tx = deletingTransaction;
+    const fixedExpenseId = tx.fixed_expense_id;
+    const previousMonthDate = new Date(tx.competencia_ano, tx.competencia_mes - 1, 0);
+    const endBeforeCurrent = previousMonthDate.toISOString().split('T')[0];
+
+    try {
+      if (mode === 'single') {
+        await deleteMutation.mutateAsync(tx.id);
+      }
+
+      if (mode === 'future') {
+        const { error: updateError } = await supabase
+          .from('fixed_expenses')
+          .update({ data_fim: endBeforeCurrent })
+          .eq('id', fixedExpenseId);
+        if (updateError) throw updateError;
+
+        const { error: deleteError } = await supabase
+          .from('transactions')
+          .delete()
+          .eq('fixed_expense_id', fixedExpenseId)
+          .neq('status', 'PAGO')
+          .or(`competencia_ano.gt.${tx.competencia_ano},and(competencia_ano.eq.${tx.competencia_ano},competencia_mes.gte.${tx.competencia_mes})`);
+        if (deleteError) throw deleteError;
+      }
+
+      if (mode === 'all') {
+        const { error: updateError } = await supabase
+          .from('fixed_expenses')
+          .update({ active: false, data_fim: endBeforeCurrent })
+          .eq('id', fixedExpenseId);
+        if (updateError) throw updateError;
+
+        const { error: deleteError } = await supabase
+          .from('transactions')
+          .delete()
+          .eq('fixed_expense_id', fixedExpenseId)
+          .neq('status', 'PAGO');
+        if (deleteError) throw deleteError;
+      }
+
+      await refreshAfterDelete();
+      toast.success(
+        mode === 'single'
+          ? 'Parcela excluída. Atenção: a despesa fixa continua ativa.'
+          : mode === 'future'
+          ? 'Despesa fixa encerrada a partir desta competência.'
+          : 'Despesa fixa desativada e parcelas em aberto removidas.'
+      );
+      closeFixedDeleteOptions();
+    } catch (error: any) {
+      console.error('Error deleting fixed expense transaction:', error);
+      toast.error('Erro ao excluir despesa fixa: ' + (error?.message || 'tente novamente'));
     }
   };
 
@@ -1164,6 +1246,71 @@ export function TransactionsList({ filters, bulkContext = 'GERAL' }: Transaction
         confirmText="Excluir"
         type="danger"
       />
+
+      <Dialog open={showFixedDeleteOptions} onOpenChange={(v) => !v && closeFixedDeleteOptions()}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Trash2 className="w-5 h-5 text-destructive" />
+              Excluir despesa fixa
+            </DialogTitle>
+          </DialogHeader>
+          {deletingTransaction && (
+            <div className="space-y-4">
+              <div className="rounded-lg bg-muted/50 p-3">
+                <p className="text-sm font-medium">{deletingTransaction.descricao || 'Despesa fixa'}</p>
+                <p className="text-xs text-muted-foreground mt-1">
+                  Competência {String(deletingTransaction.competencia_mes).padStart(2, '0')}/{deletingTransaction.competencia_ano} • {formatCurrency(Number(deletingTransaction.valor))}
+                </p>
+              </div>
+
+              <div className="rounded-lg border border-warning/30 bg-warning/10 p-3 text-xs text-warning">
+                Esta transação veio de uma despesa fixa-mãe. Se você apagar só esta parcela, a despesa fixa continua ativa e pode gerar novos meses no futuro.
+              </div>
+
+              <div className="space-y-2">
+                <Button
+                  variant="outline"
+                  className="w-full justify-start h-auto py-3"
+                  onClick={() => handleFixedExpenseDelete('single')}
+                  disabled={deleteMutation.isPending}
+                >
+                  <div className="text-left">
+                    <p className="font-medium">Excluir somente esta parcela</p>
+                    <p className="text-xs text-muted-foreground">Remove apenas este lançamento. A despesa fixa continua ativa.</p>
+                  </div>
+                </Button>
+                <Button
+                  variant="outline"
+                  className="w-full justify-start h-auto py-3"
+                  onClick={() => handleFixedExpenseDelete('future')}
+                  disabled={deleteMutation.isPending}
+                >
+                  <div className="text-left">
+                    <p className="font-medium">Encerrar desta competência em diante</p>
+                    <p className="text-xs text-muted-foreground">Define fim no mês anterior e remove parcelas futuras em aberto.</p>
+                  </div>
+                </Button>
+                <Button
+                  variant="destructive"
+                  className="w-full justify-start h-auto py-3"
+                  onClick={() => handleFixedExpenseDelete('all')}
+                  disabled={deleteMutation.isPending}
+                >
+                  <div className="text-left">
+                    <p className="font-medium">Desativar despesa fixa inteira</p>
+                    <p className="text-xs text-destructive-foreground/80">Desativa a despesa-mãe e remove parcelas em aberto.</p>
+                  </div>
+                </Button>
+              </div>
+
+              <Button variant="ghost" onClick={closeFixedDeleteOptions} className="w-full">
+                Cancelar
+              </Button>
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
 
       {/* Edit Recurring Value Modal */}
       <TransactionEditModal
