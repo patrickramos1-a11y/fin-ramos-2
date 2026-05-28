@@ -44,6 +44,7 @@ export interface RecurringContract {
   start_date: string;
   end_date?: string;
   notes?: string;
+  exigir_emissao_nf?: 'SEMPRE' | 'NUNCA' | 'PERGUNTAR';
   active: boolean;
   created_at: string;
   updated_at: string;

@@ -9,8 +9,9 @@ import {
   Edit,
   MoreHorizontal,
   Loader2,
+  ReceiptText,
 } from 'lucide-react';
-import { useQuery } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
 import { formatCurrency } from '@/data/mockData';
 import { cn } from '@/lib/utils';
@@ -18,7 +19,10 @@ import { ClientModal, ClientRecord } from '@/components/modals/ClientModal';
 import { toast } from 'sonner';
 import { EmptyState } from '@/components/feedback/EmptyState';
 
+type ContractFiscalRule = 'SEMPRE' | 'NUNCA';
+
 export function ClientsView() {
+  const qc = useQueryClient();
   const [search, setSearch] = useState('');
   const [showModal, setShowModal] = useState(false);
   const [editingClient, setEditingClient] = useState<ClientRecord | null>(null);
@@ -58,13 +62,90 @@ export function ClientsView() {
     },
   });
 
+  const { data: contractsByClient = {} } = useQuery({
+    queryKey: ['clients_contracts_fiscal'],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from('recurring_contracts')
+        .select(`
+          id,
+          client_id,
+          active,
+          exigir_emissao_nf,
+          start_date,
+          plan:contract_plans(name, minimum_wage_factor)
+        `)
+        .eq('active', true)
+        .order('created_at', { ascending: false });
+      if (error) throw error;
+      const map: Record<string, any[]> = {};
+      for (const contract of data || []) {
+        const clientId = (contract as any).client_id;
+        if (!map[clientId]) map[clientId] = [];
+        map[clientId].push(contract);
+      }
+      return map;
+    },
+  });
+
+  const updateContractFiscal = useMutation({
+    mutationFn: async ({
+      contractId,
+      rule,
+      scope,
+    }: {
+      contractId: string;
+      rule: ContractFiscalRule;
+      scope: 'future' | 'all';
+    }) => {
+      const documentValue = rule === 'SEMPRE' ? 'NOTA_FISCAL' : 'SEM_DOCUMENTO';
+      const { error: contractError } = await supabase
+        .from('recurring_contracts')
+        .update({ exigir_emissao_nf: rule })
+        .eq('id', contractId);
+      if (contractError) throw contractError;
+
+      const installmentsQuery = supabase
+        .from('recurring_installments')
+        .select('id')
+        .eq('contract_id', contractId);
+      const { data: installments, error: installmentsError } = scope === 'future'
+        ? await installmentsQuery.neq('status', 'PAGO')
+        : await installmentsQuery;
+      if (installmentsError) throw installmentsError;
+
+      const installmentIds = (installments || []).map((i) => i.id);
+      if (installmentIds.length > 0) {
+        const { error: txError } = await supabase
+          .from('transactions')
+          .update({
+            documento_recebimento: documentValue,
+            documento_tipo: rule === 'SEMPRE' ? 'NF' : 'SEM_DOCUMENTO',
+          })
+          .in('installment_id', installmentIds);
+        if (txError) throw txError;
+      }
+
+      return { count: installmentIds.length };
+    },
+    onSuccess: ({ count }) => {
+      qc.invalidateQueries({ queryKey: ['clients_contracts_fiscal'] });
+      qc.invalidateQueries({ queryKey: ['transactions'] });
+      toast.success(`Regra fiscal atualizada em ${count} lançamento(s).`);
+    },
+    onError: (error: Error) => {
+      toast.error(`Erro ao atualizar regra fiscal: ${error.message}`);
+    },
+  });
+
   const enriched = useMemo(
     () =>
       clients.map((c) => ({
         ...c,
         stats: txAgg[c.id!] || { revenue: 0, pending: 0, overdue: 0, count: 0 },
+        contracts: contractsByClient[c.id!] || [],
       })),
-    [clients, txAgg]
+    [clients, txAgg, contractsByClient]
   );
 
   const filteredClients = enriched.filter((c) =>
@@ -221,6 +302,51 @@ export function ClientsView() {
                   </div>
                 )}
               </div>
+
+              {client.contracts.length > 0 && (
+                <div className="mt-4 rounded-lg border border-border/60 bg-muted/20 p-3 space-y-3">
+                  <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                    <ReceiptText className="w-3.5 h-3.5" />
+                    Contratos ativos
+                  </div>
+                  {client.contracts.map((contract: any) => {
+                    const fiscalRule: ContractFiscalRule =
+                      contract.exigir_emissao_nf === 'SEMPRE' ? 'SEMPRE' : 'NUNCA';
+                    return (
+                      <div key={contract.id} className="rounded-md border bg-background p-2 space-y-2">
+                        <div className="flex items-center justify-between gap-2">
+                          <div className="min-w-0">
+                            <p className="text-sm font-medium truncate">
+                              {contract.plan?.name || 'Contrato personalizado'}
+                            </p>
+                            <p className="text-[11px] text-muted-foreground">
+                              Início {new Date(contract.start_date + 'T00:00:00').toLocaleDateString('pt-BR')}
+                            </p>
+                          </div>
+                          <select
+                            className="form-input h-8 w-36 text-xs"
+                            value={fiscalRule}
+                            disabled={updateContractFiscal.isPending}
+                            onChange={(event) => {
+                              const rule = event.target.value as ContractFiscalRule;
+                              const scope = window.confirm('Aplicar também aos lançamentos já pagos/passados?')
+                                ? 'all'
+                                : 'future';
+                              updateContractFiscal.mutate({ contractId: contract.id, rule, scope });
+                            }}
+                          >
+                            <option value="SEMPRE">Com NF</option>
+                            <option value="NUNCA">Sem NF</option>
+                          </select>
+                        </div>
+                        <p className="text-[10px] text-muted-foreground">
+                          Ao alterar, confirme OK para todos os lançamentos; Cancelar aplica só aos futuros/em aberto.
+                        </p>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
 
               <div className="flex items-center gap-2 mt-4 pt-4 border-t border-border/50">
                 <button className="btn-ghost flex-1 text-sm" onClick={() => handleViewContracts(client)}>

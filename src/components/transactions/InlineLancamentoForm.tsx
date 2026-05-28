@@ -91,7 +91,6 @@ export function InlineLancamentoForm({ defaultMonth, defaultYear, onNeedsDedicat
   const [discountMonths, setDiscountMonths] = useState('');
   const [discountUntil, setDiscountUntil] = useState('');
   const [discountDuration, setDiscountDuration] = useState<'months' | 'date'>('months');
-  const [exigirNF, setExigirNF] = useState<'SEMPRE' | 'NUNCA' | 'PERGUNTAR'>('PERGUNTAR');
 
   const activeCategories = (categories || []).filter(c => c.active);
   const filtered = useMemo(() => {
@@ -174,7 +173,6 @@ export function InlineLancamentoForm({ defaultMonth, defaultYear, onNeedsDedicat
     setPricingModel('SM'); setSelectedPlanId(''); setCustomFactor(''); setFixedValue('');
     setHasDiscount(false); setDiscountType('percent'); setDiscountAmount(''); setDiscountMonths('');
     setDiscountUntil(''); setDiscountDuration('months');
-    setExigirNF('PERGUNTAR');
     setStructuredStep(1);
     setStatus('EM_ABERTO'); setDataPagamento(today);
     setCompetenciaMes(defaultMonth); setCompetenciaAno(defaultYear);
@@ -224,7 +222,7 @@ export function InlineLancamentoForm({ defaultMonth, defaultYear, onNeedsDedicat
           notes: notes || undefined,
           year: competenciaAno,
           dia_vencimento: new Date(dataVenc + 'T00:00:00').getDate(),
-          exigir_emissao_nf: exigirNF,
+          exigir_emissao_nf: documentoRecebimento === 'NOTA_FISCAL' ? 'SEMPRE' : 'NUNCA',
           ...(hasDiscount && discountNumber > 0 ? {
             discount_type: discountType,
           discount_amount: discountNumber,
@@ -851,17 +849,6 @@ export function InlineLancamentoForm({ defaultMonth, defaultYear, onNeedsDedicat
                     </p>
                   </div>
                 )}
-                <div>
-                  <Label className="text-xs">Regra de NF do contrato</Label>
-                  <Select value={exigirNF} onValueChange={(v) => setExigirNF(v as any)}>
-                    <SelectTrigger><SelectValue /></SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="SEMPRE">Sempre emitir NF</SelectItem>
-                      <SelectItem value="NUNCA">Nunca emitir NF</SelectItem>
-                      <SelectItem value="PERGUNTAR">Perguntar por lançamento</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
               </div>
             )}
 
@@ -981,7 +968,7 @@ export function InlineLancamentoForm({ defaultMonth, defaultYear, onNeedsDedicat
                     <div><span className="text-muted-foreground">Início:</span> <strong>{new Date(dataVenc + 'T00:00:00').toLocaleDateString('pt-BR')}</strong></div>
                     <div><span className="text-muted-foreground">Parcelas no ano:</span> <strong>{recurringInstallmentsCount}</strong></div>
                     {hasDiscount && <div><span className="text-muted-foreground">Com desconto:</span> <strong className="text-warning">R$ {Math.max(0, recurringDiscountedValue).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</strong></div>}
-                    <div><span className="text-muted-foreground">NF:</span> <strong>{exigirNF === 'SEMPRE' ? 'Sempre' : exigirNF === 'NUNCA' ? 'Nunca' : 'Perguntar'}</strong></div>
+                    <div><span className="text-muted-foreground">Documento:</span> <strong>{documentoRecebimento === 'NOTA_FISCAL' ? 'Nota Fiscal' : documentoRecebimento === 'SEM_DOCUMENTO' ? 'Sem documento' : documentoRecebimento || '—'}</strong></div>
                   </div>
                 ) : (
                   <div className="grid sm:grid-cols-2 gap-x-4 gap-y-0.5 text-foreground/90">
