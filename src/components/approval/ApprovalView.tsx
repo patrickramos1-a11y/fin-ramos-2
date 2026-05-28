@@ -122,7 +122,6 @@ export function ApprovalView() {
   const [bulkCategorySearch, setBulkCategorySearch] = useState<string>('');
   const [bulkClienteId, setBulkClienteId] = useState<string>('');
   const [bulkEntityId, setBulkEntityId] = useState<string>('');
-  const [bulkResponsavelId, setBulkResponsavelId] = useState<string>('');
   const [bulkOrigem, setBulkOrigem] = useState<string>('');
   // New editable fields
   const [bulkDescricao, setBulkDescricao] = useState<string>('');
@@ -344,7 +343,6 @@ export function ApprovalView() {
       setBulkCostCenterId('');
       setBulkClienteId('');
       setBulkEntityId('');
-      setBulkResponsavelId('');
       setBulkOrigem('');
       setBulkDescricao('');
       setBulkValor('');
@@ -371,7 +369,6 @@ export function ApprovalView() {
     setBulkAccountId(commonValue(selectedTransactions.map(t => t.account_id)) || '');
     setBulkCostCenterId(commonValue(selectedTransactions.map(t => t.cost_center_id)) || '');
     setBulkEntityId(commonValue(selectedTransactions.map(t => t.entity_id)) || '');
-    setBulkResponsavelId(commonValue(selectedTransactions.map(t => t.responsavel_id)) || '');
     setBulkOrigem(commonValue(selectedTransactions.map(t => t.origem)) || '');
     // Descrição/Valor/Vencimento NÃO são pré-preenchidos: campos vazios = "não alterar".
     // Isso evita reescrever desnecessariamente esses campos (e disparar triggers caros) em massa.
@@ -509,7 +506,7 @@ export function ApprovalView() {
 
   const resetBulkFields = () => {
     setBulkCategoryId(''); setBulkAccountId(''); setBulkCostCenterId(''); setBulkCategorySearch('');
-    setBulkClienteId(''); setBulkEntityId(''); setBulkResponsavelId(''); setBulkOrigem('');
+    setBulkClienteId(''); setBulkEntityId(''); setBulkOrigem('');
     setBulkDescricao(''); setBulkValor(''); setBulkDataVencimento(''); setBulkStatus(''); setBulkNotes('');
   };
 
@@ -525,7 +522,6 @@ export function ApprovalView() {
         t.client_name?.toLowerCase().includes(s) ||
         t.category_name?.toLowerCase().includes(s) ||
         t.entity_name?.toLowerCase().includes(s) ||
-        t.responsible_name?.toLowerCase().includes(s) ||
         t.fixed_expense_name?.toLowerCase().includes(s)
       );
     }
@@ -640,7 +636,6 @@ export function ApprovalView() {
     if (bulkCostCenterId) updates.cost_center_id = bulkCostCenterId;
     if (bulkClienteId) updates.cliente_id = bulkClienteId;
     if (bulkEntityId) updates.entity_id = bulkEntityId;
-    if (bulkResponsavelId) updates.responsavel_id = bulkResponsavelId;
     if (bulkOrigem) updates.origem = bulkOrigem;
     if (bulkDescricao.trim()) updates.descricao = bulkDescricao.trim();
     if (bulkValor.trim()) {
@@ -810,7 +805,6 @@ export function ApprovalView() {
                       <div><span className="text-muted-foreground">Conta:</span> <strong>{sample.account_name || <span className="text-amber-600 italic">não preenchido</span>}</strong></div>
                       <div><span className="text-muted-foreground">C. Custo:</span> <strong>{sample.cost_center_name || '-'}</strong></div>
                       <div><span className="text-muted-foreground">Entidade:</span> <strong>{sample.entity_name || '-'}</strong></div>
-                      <div><span className="text-muted-foreground">Responsável:</span> <strong>{sample.responsible_name || '-'}</strong></div>
                       <div><span className="text-muted-foreground">Vencimento:</span> <strong>dia {new Date(sample.data_vencimento).getDate()}</strong></div>
                       <div><span className="text-muted-foreground">Valor unit.:</span> <strong>{formatCurrency(Number(sample.valor))}</strong></div>
                       <div><span className="text-muted-foreground">Origem:</span> <strong>{getOrigemLabel(sample.origem)}</strong></div>
@@ -995,7 +989,6 @@ export function ApprovalView() {
                     </th>
                     <th className="text-left p-3 text-xs font-medium">Cliente (empresa)</th>
                     <th className="text-left p-3 text-xs font-medium">Vinculado a</th>
-                    <th className="text-left p-3 text-xs font-medium">Responsável</th>
                     <th className="text-left p-3 text-xs font-medium">Categoria</th>
                     <th className="text-left p-3 text-xs font-medium">Origem</th>
                     <th className="text-left p-3 text-xs font-medium cursor-pointer select-none" onClick={() => handleSort('data_vencimento')}>
@@ -1050,13 +1043,6 @@ export function ApprovalView() {
                         <td className="p-3 text-xs">
                           {t.entity_name ? (
                             <span className="font-medium">{t.entity_name}</span>
-                          ) : (
-                            <span className="text-muted-foreground">-</span>
-                          )}
-                        </td>
-                        <td className="p-3 text-xs">
-                          {t.responsible_name ? (
-                            <span className="font-medium">{t.responsible_name}</span>
                           ) : (
                             <span className="text-muted-foreground">-</span>
                           )}
@@ -1436,30 +1422,6 @@ export function ApprovalView() {
                 </Select>
               </div>
 
-              {/* Responsável */}
-              <div className="space-y-1.5">
-                <Label className="text-xs flex items-center justify-between">
-                  <span>Responsável (executor)</span>
-                  {bulkResponsavelId && (
-                    <button
-                      type="button"
-                      onClick={() => setBulkResponsavelId('')}
-                      className="text-[10px] text-muted-foreground hover:text-foreground"
-                    >
-                      limpar
-                    </button>
-                  )}
-                </Label>
-                <Select value={bulkResponsavelId} onValueChange={setBulkResponsavelId}>
-                  <SelectTrigger><SelectValue placeholder="Não alterar" /></SelectTrigger>
-                  <SelectContent className="max-h-[280px]">
-                    {(entitiesList || []).map((e: any) => (
-                      <SelectItem key={e.id} value={e.id}>{e.name}</SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-
               {/* Origem */}
               <div className="space-y-1.5">
                 <Label className="text-xs flex items-center justify-between">
@@ -1595,7 +1557,6 @@ export function ApprovalView() {
                 <div><span className="text-muted-foreground">Categoria:</span> <strong>{detailTx.category_name || '-'}</strong></div>
                 <div><span className="text-muted-foreground">Conta:</span> <strong>{detailTx.account_name || '-'}</strong></div>
                 <div><span className="text-muted-foreground">C. Custo:</span> <strong>{detailTx.cost_center_name || '-'}</strong></div>
-                <div><span className="text-muted-foreground">Responsável:</span> <strong>{detailTx.responsible_name || '-'}</strong></div>
                 <div><span className="text-muted-foreground">Entidade:</span> <strong>{detailTx.entity_name || '-'}</strong></div>
                 <div><span className="text-muted-foreground">Vencimento:</span> <strong>{formatDate(detailTx.data_vencimento)}</strong></div>
                 <div><span className="text-muted-foreground">Criado em:</span> <strong>{formatDate(detailTx.created_at)}</strong></div>

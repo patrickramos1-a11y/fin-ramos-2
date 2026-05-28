@@ -17,6 +17,7 @@ import { useAuth } from '@/hooks/useAuth';
 import { useTransactionCategories, useAccounts, usePaymentMethods } from '@/hooks/useFinancialConfig';
 import { useCreateTransaction, useClients } from '@/hooks/useTransactions';
 import { useSaveTransactionEntities } from '@/hooks/useTransactionEntities';
+import { useFinancialEntities } from '@/hooks/useFinancialEntities';
 import { normalizeForSearch } from './CategorySearchInput';
 import { MultiEntitySelector } from './MultiEntitySelector';
 import { CategoryCombobox } from './CategoryCombobox';
@@ -41,6 +42,7 @@ export function InlineLancamentoForm({ defaultMonth, defaultYear, onNeedsDedicat
   const { data: categories } = useTransactionCategories();
   const { data: accounts } = useAccounts();
   const { data: clients } = useClients();
+  const { data: entities } = useFinancialEntities();
   const { data: paymentMethods } = usePaymentMethods();
   const createTransaction = useCreateTransaction();
   const saveEntities = useSaveTransactionEntities();
@@ -112,6 +114,10 @@ export function InlineLancamentoForm({ defaultMonth, defaultYear, onNeedsDedicat
   const ramosClient = useMemo(
     () => (clients || []).find((c: any) => /ramos/i.test(c.name)),
     [clients]
+  );
+  const ramosEntity = useMemo(
+    () => (entities || []).find((e) => /ramos/i.test(e.name)),
+    [entities]
   );
 
   // Para despesas, sugere Ramos Engenharia como cliente padrão da operação,
@@ -353,6 +359,28 @@ export function InlineLancamentoForm({ defaultMonth, defaultYear, onNeedsDedicat
               </div>
               <div>
                 <Label className="text-xs">Cliente *</Label>
+                {!isEntrada && ramosClient && (
+                  <div className="mb-2 grid grid-cols-2 gap-2">
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant={clienteId === ramosClient.id ? 'default' : 'outline'}
+                      onClick={() => setClienteId(ramosClient.id)}
+                      className="h-8 text-xs"
+                    >
+                      Despesa da Ramos
+                    </Button>
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant={clienteId && clienteId !== ramosClient.id ? 'default' : 'outline'}
+                      onClick={() => setClienteId('')}
+                      className="h-8 text-xs"
+                    >
+                      Vincular cliente
+                    </Button>
+                  </div>
+                )}
                 <QuickClientCombobox
                   clients={(clients || []) as any}
                   value={clienteId}
@@ -512,6 +540,39 @@ export function InlineLancamentoForm({ defaultMonth, defaultYear, onNeedsDedicat
 
             {/* Entidade obrigatória para rastreamento operacional */}
             <div>
+              {ramosEntity && (
+                <div className="mb-2 grid sm:grid-cols-3 gap-2">
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant={entityIds.includes(ramosEntity.id) ? 'default' : 'outline'}
+                    onClick={() => setEntityIds([ramosEntity.id])}
+                    className="h-8 text-xs"
+                  >
+                    Própria Ramos
+                  </Button>
+                  {clienteId && (
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="outline"
+                      onClick={() => setEntityIds([])}
+                      className="h-8 text-xs"
+                    >
+                      Cliente/grupo específico
+                    </Button>
+                  )}
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="outline"
+                    onClick={() => setEntityIds([])}
+                    className="h-8 text-xs"
+                  >
+                    Escolher manualmente
+                  </Button>
+                </div>
+              )}
               <MultiEntitySelector
                 selectedIds={entityIds}
                 onChange={setEntityIds}

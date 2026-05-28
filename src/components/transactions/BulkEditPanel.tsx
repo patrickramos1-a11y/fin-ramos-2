@@ -95,7 +95,6 @@ interface BulkEditPanelProps {
 interface ContextFields {
   cliente: boolean;
   entity: boolean;
-  responsavel: boolean;
   categoria: boolean;
   conta: boolean;
   centroCusto: boolean;
@@ -114,7 +113,7 @@ function getContextFields(ctx: BulkContext): { fields: ContextFields; warnings: 
       warnings.push('Cliente, Valor e Vencimento são definidos pelo contrato/plano e não podem ser alterados em massa aqui.');
       return {
         fields: {
-          cliente: false, entity: true, responsavel: true,
+          cliente: false, entity: true,
           categoria: true, conta: true, centroCusto: true, status: true,
           valor: false, vencimento: false, descricao: false, notes: true,
           documentoRecebimento: true,
@@ -125,7 +124,7 @@ function getContextFields(ctx: BulkContext): { fields: ContextFields; warnings: 
       warnings.push('Valor e Vencimento são definidos pelo cadastro da despesa fixa e não podem ser alterados em massa aqui.');
       return {
         fields: {
-          cliente: false, entity: true, responsavel: true,
+          cliente: false, entity: true,
           categoria: true, conta: true, centroCusto: true, status: true,
           valor: false, vencimento: false, descricao: false, notes: true,
           documentoRecebimento: true,
@@ -138,7 +137,7 @@ function getContextFields(ctx: BulkContext): { fields: ContextFields; warnings: 
     default:
       return {
         fields: {
-          cliente: true, entity: true, responsavel: true,
+          cliente: true, entity: true,
           categoria: true, conta: true, centroCusto: true, status: true,
           valor: true, vencimento: true, descricao: false, notes: true,
           documentoRecebimento: true,
@@ -160,7 +159,6 @@ const DOC_RECEB_OPTIONS = [
 const FIELD_TO_COLUMN: Record<string, string> = {
   cliente_id: 'cliente_id',
   entity_id: 'entity_id',
-  responsavel_id: 'responsavel_id',
   transaction_category_id: 'transaction_category_id',
   account_id: 'account_id',
   cost_center_id: 'cost_center_id',
@@ -182,7 +180,6 @@ export function BulkEditPanel({
   // Estado dos campos editáveis
   const [bulkClienteId, setBulkClienteId] = useState('');
   const [bulkEntityId, setBulkEntityId] = useState('');
-  const [bulkResponsavelId, setBulkResponsavelId] = useState('');
   const [bulkCategoryId, setBulkCategoryId] = useState('');
   const [bulkAccountId, setBulkAccountId] = useState('');
   const [bulkCostCenterId, setBulkCostCenterId] = useState('');
@@ -251,7 +248,6 @@ export function BulkEditPanel({
     if (selectedTransactions.length === 0) return;
     setBulkClienteId(commonValue(selectedTransactions.map(t => t.cliente_id ?? null)) || '');
     setBulkEntityId(commonValue(selectedTransactions.map(t => t.entity_id ?? null)) || '');
-    setBulkResponsavelId(commonValue(selectedTransactions.map(t => t.responsavel_id ?? null)) || '');
     setBulkCategoryId(commonValue(selectedTransactions.map(t => t.transaction_category_id ?? null)) || '');
     setBulkAccountId(commonValue(selectedTransactions.map(t => t.account_id ?? null)) || '');
     setBulkCostCenterId(commonValue(selectedTransactions.map(t => t.cost_center_id ?? null)) || '');
@@ -268,7 +264,7 @@ export function BulkEditPanel({
   }, [open]);
 
   const resetFields = () => {
-    setBulkClienteId(''); setBulkEntityId(''); setBulkResponsavelId('');
+    setBulkClienteId(''); setBulkEntityId('');
     setBulkCategoryId(''); setBulkAccountId(''); setBulkCostCenterId('');
     setBulkStatus(''); setBulkValor(''); setBulkDataVencimento('');
     setBulkNotes(''); setBulkCategorySearch(''); setBulkDocumentoRecebimento('');
@@ -300,7 +296,6 @@ export function BulkEditPanel({
     const updates: Record<string, any> = {};
     if (allowedFields.cliente && bulkClienteId) updates.cliente_id = bulkClienteId;
     if (allowedFields.entity && bulkEntityId) updates.entity_id = bulkEntityId;
-    if (allowedFields.responsavel && bulkResponsavelId) updates.responsavel_id = bulkResponsavelId;
     if (allowedFields.categoria && bulkCategoryId) updates.transaction_category_id = bulkCategoryId;
     if (allowedFields.conta && bulkAccountId) updates.account_id = bulkAccountId;
     if (allowedFields.centroCusto && bulkCostCenterId) updates.cost_center_id = bulkCostCenterId;
@@ -348,7 +343,7 @@ export function BulkEditPanel({
 
     return { fieldNames, overwriteCounts, origens, anos, total: selectedTransactions.length };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [bulkClienteId, bulkEntityId, bulkResponsavelId, bulkCategoryId, bulkAccountId,
+  }, [bulkClienteId, bulkEntityId, bulkCategoryId, bulkAccountId,
       bulkCostCenterId, bulkStatus, bulkValor, bulkDataVencimento, bulkNotes,
       bulkDocumentoRecebimento, selectedTransactions, allowedFields]);
 
@@ -569,14 +564,6 @@ export function BulkEditPanel({
                       <span className="text-[10px] text-muted-foreground">{e.type}</span>
                     </div>
                   </SelectItem>
-                ))}
-              </BulkSelectField>
-            )}
-
-            {allowedFields.responsavel && (
-              <BulkSelectField label="Responsável (executor)" value={bulkResponsavelId} onChange={setBulkResponsavelId} disabled={isPending}>
-                {((entitiesList || []) as any[]).map(e => (
-                  <SelectItem key={e.id} value={e.id}>{e.name}</SelectItem>
                 ))}
               </BulkSelectField>
             )}

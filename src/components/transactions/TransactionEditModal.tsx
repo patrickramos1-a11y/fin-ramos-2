@@ -44,7 +44,6 @@ export function TransactionEditModal({ open, onClose, transaction }: Transaction
   const [accountId, setAccountId] = useState('');
   const [costCenterId, setCostCenterId] = useState('');
   const [entityId, setEntityId] = useState('');
-  const [responsavelId, setResponsavelId] = useState('');
   const [clienteId, setClienteId] = useState('');
   const [documentoTipo, setDocumentoTipo] = useState('');
   const [documentoNumero, setDocumentoNumero] = useState('');
@@ -110,7 +109,6 @@ export function TransactionEditModal({ open, onClose, transaction }: Transaction
       setAccountId(transaction.account_id || '');
       setCostCenterId(transaction.cost_center_id || '');
       setEntityId(transaction.entity_id || '');
-      setResponsavelId(transaction.responsavel_id || '');
       setClienteId((transaction as any).cliente_id || '');
       setDocumentoTipo(transaction.documento_tipo || '');
       setDocumentoNumero(transaction.documento_numero || '');
@@ -164,7 +162,6 @@ export function TransactionEditModal({ open, onClose, transaction }: Transaction
         account_id: accountId || null,
         cost_center_id: costCenterId || null,
         entity_id: entityId || null,
-        responsavel_id: responsavelId || null,
         cliente_id: clienteId || null,
       };
 
@@ -217,7 +214,6 @@ export function TransactionEditModal({ open, onClose, transaction }: Transaction
         if (accountId) propagateUpdates.account_id = accountId;
         if (costCenterId) propagateUpdates.cost_center_id = costCenterId;
         if (entityId) propagateUpdates.entity_id = entityId;
-        if (responsavelId) propagateUpdates.responsavel_id = responsavelId;
         if (clienteId) propagateUpdates.cliente_id = clienteId;
         if (documentoTipo) propagateUpdates.documento_tipo = documentoTipo;
 
@@ -640,48 +636,32 @@ export function TransactionEditModal({ open, onClose, transaction }: Transaction
             )}
           </div>
 
-          {/* Cost Center + Responsible */}
-          <div className="grid grid-cols-2 gap-3">
-            <div>
-              <Label>Centro de Custo</Label>
-              <Select value={costCenterId || '__none__'} onValueChange={(v) => handleCostCenterChange(v === '__none__' ? '' : v)}>
-                <SelectTrigger><SelectValue placeholder="Selecione" /></SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="__none__">Nenhum</SelectItem>
-                  {visibleCostCenters.map(cc => {
-                    const Icon = getEntityIcon(cc.name);
-                    const color = colorFromName(cc.name);
-                    return (
-                      <SelectItem key={cc.id} value={cc.id}>
-                        <span className="inline-flex items-center gap-2">
-                          <span
-                            className="inline-flex items-center justify-center w-5 h-5 rounded"
-                            style={{ backgroundColor: `${color}20`, color }}
-                          >
-                            <Icon className="w-3 h-3" />
-                          </span>
-                          <span style={{ color }} className="font-medium">{cc.name}</span>
-                          {!cc.active && <Badge variant="outline" className="text-[9px] px-1 py-0">inativo</Badge>}
+          <div>
+            <Label>Centro de Custo</Label>
+            <Select value={costCenterId || '__none__'} onValueChange={(v) => handleCostCenterChange(v === '__none__' ? '' : v)}>
+              <SelectTrigger><SelectValue placeholder="Selecione" /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="__none__">Nenhum</SelectItem>
+                {visibleCostCenters.map(cc => {
+                  const Icon = getEntityIcon(cc.name);
+                  const color = colorFromName(cc.name);
+                  return (
+                    <SelectItem key={cc.id} value={cc.id}>
+                      <span className="inline-flex items-center gap-2">
+                        <span
+                          className="inline-flex items-center justify-center w-5 h-5 rounded"
+                          style={{ backgroundColor: `${color}20`, color }}
+                        >
+                          <Icon className="w-3 h-3" />
                         </span>
-                      </SelectItem>
-                    );
-                  })}
-                </SelectContent>
-              </Select>
-            </div>
-            <div>
-              <Label>Responsável (executor)</Label>
-              <p className="text-[10px] text-muted-foreground mb-1">Quem autorizou ou executou a transação.</p>
-              <Select value={responsavelId || '__none__'} onValueChange={(v) => setResponsavelId(v === '__none__' ? '' : v)}>
-                <SelectTrigger><SelectValue placeholder="Selecione" /></SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="__none__">Nenhum</SelectItem>
-                  {entities?.map(e => (
-                    <SelectItem key={e.id} value={e.id}>{e.name}</SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
+                        <span style={{ color }} className="font-medium">{cc.name}</span>
+                        {!cc.active && <Badge variant="outline" className="text-[9px] px-1 py-0">inativo</Badge>}
+                      </span>
+                    </SelectItem>
+                  );
+                })}
+              </SelectContent>
+            </Select>
           </div>
 
           {/* Document type */}
