@@ -62,6 +62,7 @@ export function InlineLancamentoForm({ defaultMonth, defaultYear, onNeedsDedicat
   const [notes, setNotes] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [collapsed, setCollapsed] = useState(false);
+  const [structuredStep, setStructuredStep] = useState(1);
 
   // Status/competência/pagamento (contexto rico)
   const [status, setStatus] = useState<'EM_ABERTO' | 'PAGO'>('EM_ABERTO');
@@ -103,7 +104,7 @@ export function InlineLancamentoForm({ defaultMonth, defaultYear, onNeedsDedicat
   );
 
   const isEntrada = selected?.type === 'ENTRADA';
-  const isVariavel = selected?.subtype === 'VARIAVEL';
+  const isStructuredFlow = selected?.subtype === 'RECORRENTE' || selected?.subtype === 'FIXA';
   const canRepeat = selected?.subtype === 'RECORRENTE' || selected?.subtype === 'FIXA' || selected?.subtype === 'VARIAVEL';
   const needsDedicated = false;
 
@@ -123,12 +124,17 @@ export function InlineLancamentoForm({ defaultMonth, defaultYear, onNeedsDedicat
     if (isEntrada && entityIds.length > 0) setEntityIds([]);
   }, [isEntrada, entityIds.length]);
 
+  useEffect(() => {
+    setStructuredStep(1);
+  }, [categoryId]);
+
   const reset = () => {
     setSearch(''); setCategoryId(''); setValorNum(0); setDataVenc(today);
     setDescricao(''); setDescricaoTouched(false);
     setClienteId(''); setEntityIds([]); setAccountOverride('');
     setPaymentMethodId(''); setNotes('');
     setEnableRep(false); setRepCount(2);
+    setStructuredStep(1);
     setStatus('EM_ABERTO'); setDataPagamento(today);
     setCompetenciaMes(defaultMonth); setCompetenciaAno(defaultYear);
     setOrigemReceita(''); setDocumentoRecebimento('');
@@ -147,6 +153,12 @@ export function InlineLancamentoForm({ defaultMonth, defaultYear, onNeedsDedicat
     (!fiscalRequired || (!!origemReceita && !!documentoRecebimento)) &&
     (!paidRequired || (!!dataPagamento && !!paymentMethodId)) &&
     !!descricao.trim();
+
+  const structuredStepValid =
+    structuredStep === 1 ? !!clienteId && (!entityRequired || entityIds.length > 0) :
+    structuredStep === 2 ? valorNum > 0 && !!dataVenc && !!descricao.trim() && !!resolution.accountId :
+    structuredStep === 3 ? (!fiscalRequired || (!!origemReceita && !!documentoRecebimento)) && (!paidRequired || (!!dataPagamento && !!paymentMethodId)) :
+    canSubmit;
 
   const handleSubmit = async (andNew = false) => {
     if (!selected) return;
@@ -317,7 +329,39 @@ export function InlineLancamentoForm({ defaultMonth, defaultYear, onNeedsDedicat
           <>
             {/* Badges removidos — agora exibidos no CategoryChip */}
 
+            {isStructuredFlow && (
+              <div className="grid grid-cols-4 gap-2 rounded-xl border bg-background/70 p-2">
+                {[
+                  ['Cliente', 'Quem/para quem'],
+                  ['Valor', 'Plano e dados'],
+                  ['Regras', 'Fiscal e repetição'],
+                  ['Confirmar', 'Revisão final'],
+                ].map(([title, subtitle], idx) => {
+                  const number = idx + 1;
+                  const active = structuredStep === number;
+                  const done = structuredStep > number;
+                  return (
+                    <button
+                      key={title}
+                      type="button"
+                      onClick={() => number <= structuredStep && setStructuredStep(number)}
+                      className={cn(
+                        'rounded-lg border px-2 py-2 text-left transition-colors',
+                        active && 'border-primary bg-primary text-primary-foreground',
+                        done && !active && 'border-income/30 bg-income/10 text-income',
+                        !active && !done && 'border-border text-muted-foreground'
+                      )}
+                    >
+                      <span className="block text-xs font-bold">{number}. {title}</span>
+                      <span className="block text-[10px] opacity-80">{subtitle}</span>
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+
             {/* Linha 2: valor + data + entidade */}
+            {(!isStructuredFlow || structuredStep === 1 || structuredStep === 2) && (
             <div className="grid sm:grid-cols-3 gap-3">
               <div>
                 <Label className="text-xs">Valor *</Label>
@@ -368,8 +412,10 @@ export function InlineLancamentoForm({ defaultMonth, defaultYear, onNeedsDedicat
                 )}
               </div>
             </div>
+            )}
 
             {/* Linha 3: conta override (se necessário) + descricao */}
+            {(!isStructuredFlow || structuredStep === 2) && (
             <div className="grid sm:grid-cols-2 gap-3">
               <div>
                 <Label className="text-xs">
@@ -403,9 +449,10 @@ export function InlineLancamentoForm({ defaultMonth, defaultYear, onNeedsDedicat
                 />
               </div>
             </div>
+            )}
 
             {/* Bloco contextual: Dados Fiscais (entradas) */}
-            {isEntrada && (
+            {isEntrada && (!isStructuredFlow || structuredStep === 3) && (
               <div className="border border-income/30 bg-income/5 rounded-lg p-3 space-y-3">
                 <div className="text-[11px] font-bold uppercase tracking-wide text-income flex items-center gap-1.5">
                   <Sparkles className="w-3 h-3" /> Dados Fiscais (obrigatório)
@@ -442,6 +489,7 @@ export function InlineLancamentoForm({ defaultMonth, defaultYear, onNeedsDedicat
             )}
 
             {/* Status financeiro + competência */}
+            {(!isStructuredFlow || structuredStep === 3) && (
             <div className="border rounded-lg p-3 space-y-3 bg-muted/20">
               <div className="flex items-center justify-between flex-wrap gap-2">
                 <Label className="text-xs font-semibold">Situação financeira</Label>
@@ -511,9 +559,10 @@ export function InlineLancamentoForm({ defaultMonth, defaultYear, onNeedsDedicat
                 )}
               </div>
             </div>
+            )}
 
             {/* Entidade obrigatória apenas para despesas */}
-            {!isEntrada && (
+            {!isEntrada && (!isStructuredFlow || structuredStep === 1) && (
               <div>
                 {ramosEntity && (
                   <div className="mb-2 grid sm:grid-cols-3 gap-2">
@@ -560,7 +609,7 @@ export function InlineLancamentoForm({ defaultMonth, defaultYear, onNeedsDedicat
             )}
 
             {/* Repetição simples */}
-            {canRepeat && (
+            {canRepeat && (!isStructuredFlow || structuredStep === 3) && (
               <div className="border rounded-lg p-3 space-y-2 bg-muted/20">
                 <div className="flex items-center justify-between">
                   <Label className="text-xs flex items-center gap-1.5">
@@ -586,6 +635,28 @@ export function InlineLancamentoForm({ defaultMonth, defaultYear, onNeedsDedicat
               </div>
             )}
 
+            {isStructuredFlow && structuredStep < 4 && (
+              <div className="flex justify-between border-t pt-3">
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={() => setStructuredStep((s) => Math.max(1, s - 1))}
+                  disabled={structuredStep === 1}
+                >
+                  Voltar
+                </Button>
+                <Button
+                  type="button"
+                  onClick={() => setStructuredStep((s) => Math.min(4, s + 1))}
+                  disabled={!structuredStepValid}
+                >
+                  Continuar
+                </Button>
+              </div>
+            )}
+
+            {(!isStructuredFlow || structuredStep === 4) && (
+            <>
             <div>
               <Label className="text-xs">Observações</Label>
               <Textarea rows={2} value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="Opcional" />
@@ -632,6 +703,8 @@ export function InlineLancamentoForm({ defaultMonth, defaultYear, onNeedsDedicat
                 </Button>
               </div>
             </div>
+            </>
+            )}
           </>
         )}
           </div>
