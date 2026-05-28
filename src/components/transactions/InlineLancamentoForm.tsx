@@ -8,7 +8,7 @@ import { Badge } from '@/components/ui/badge';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import {
   ArrowDownCircle, ArrowUpCircle, Loader2, Send, RefreshCw,
-  Repeat, Split, Sparkles, AlertCircle, ChevronUp, ChevronDown,
+  Repeat, Sparkles, ChevronUp, ChevronDown,
   Plus, Eye, Keyboard,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
@@ -73,9 +73,8 @@ export function InlineLancamentoForm({ defaultMonth, defaultYear, onNeedsDedicat
   const [origemReceita, setOrigemReceita] = useState('');
   const [documentoRecebimento, setDocumentoRecebimento] = useState('');
 
-  // Parcelamento (despesa variável)
+  // Repetição simples
   const [enableRep, setEnableRep] = useState(false);
-  const [repMode, setRepMode] = useState<'parcelamento' | 'repeticao'>('parcelamento');
   const [repCount, setRepCount] = useState(2);
 
   const activeCategories = (categories || []).filter(c => c.active);
@@ -104,9 +103,9 @@ export function InlineLancamentoForm({ defaultMonth, defaultYear, onNeedsDedicat
   );
 
   const isEntrada = selected?.type === 'ENTRADA';
-  const isAvulsaEntrada = selected?.type === 'ENTRADA' && selected?.subtype === 'AVULSA';
   const isVariavel = selected?.subtype === 'VARIAVEL';
-  const needsDedicated = selected?.subtype === 'RECORRENTE' || selected?.subtype === 'FIXA';
+  const canRepeat = selected?.subtype === 'RECORRENTE' || selected?.subtype === 'FIXA' || selected?.subtype === 'VARIAVEL';
+  const needsDedicated = false;
 
   const accObj = accounts?.find(a => a.id === resolution.accountId);
 
@@ -120,27 +119,25 @@ export function InlineLancamentoForm({ defaultMonth, defaultYear, onNeedsDedicat
     [entities]
   );
 
-  // Para despesas, sugere Ramos Engenharia como cliente padrão da operação,
-  // mas mantém o campo obrigatório para evitar lançamentos sem rastreio.
   useEffect(() => {
-    if (selected?.type === 'SAIDA' && ramosClient && !clienteId) setClienteId(ramosClient.id);
-  }, [selected?.type, ramosClient, clienteId]);
+    if (isEntrada && entityIds.length > 0) setEntityIds([]);
+  }, [isEntrada, entityIds.length]);
 
   const reset = () => {
     setSearch(''); setCategoryId(''); setValorNum(0); setDataVenc(today);
     setDescricao(''); setDescricaoTouched(false);
     setClienteId(''); setEntityIds([]); setAccountOverride('');
     setPaymentMethodId(''); setNotes('');
-    setEnableRep(false); setRepMode('parcelamento'); setRepCount(2);
+    setEnableRep(false); setRepCount(2);
     setStatus('EM_ABERTO'); setDataPagamento(today);
     setCompetenciaMes(defaultMonth); setCompetenciaAno(defaultYear);
     setOrigemReceita(''); setDocumentoRecebimento('');
   };
 
-  const fiscalRequired = isAvulsaEntrada;
+  const fiscalRequired = !!isEntrada;
   const paidRequired = status === 'PAGO';
   const clientRequired = true;
-  const entityRequired = true;
+  const entityRequired = !isEntrada;
 
   const canSubmit =
     !!selected && !needsDedicated && valorNum > 0 && !!dataVenc &&
@@ -153,17 +150,11 @@ export function InlineLancamentoForm({ defaultMonth, defaultYear, onNeedsDedicat
 
   const handleSubmit = async (andNew = false) => {
     if (!selected) return;
-    if (needsDedicated) {
-      onNeedsDedicatedFlow(selected.subtype === 'RECORRENTE' ? 'recurring' : 'fixa');
-      return;
-    }
     if (!canSubmit) return;
     setSubmitting(true);
     try {
       const reps = enableRep && repCount > 1 ? repCount : 1;
-      const valorParcela = enableRep && repMode === 'parcelamento' && repCount > 1
-        ? Math.round((valorNum / repCount) * 100) / 100
-        : valorNum;
+      const valorParcela = valorNum;
 
       let m = competenciaMes;
       let y = competenciaAno;
@@ -172,12 +163,12 @@ export function InlineLancamentoForm({ defaultMonth, defaultYear, onNeedsDedicat
       for (let i = 0; i < reps; i++) {
         const due = new Date(y, m - 1, baseDay).toISOString().split('T')[0];
         const suffix = reps > 1
-          ? (repMode === 'parcelamento' ? ` - Parcela ${i + 1}/${reps}` : ` - Repetição ${i + 1}/${reps}`)
+          ? ` - Repetição ${i + 1}/${reps}`
           : '';
         const isPaidThis = paidRequired && i === 0;
         const result = await createTransaction.mutateAsync({
           tipo_movimento: selected.type,
-          natureza: selected.subtype === 'AVULSA' ? 'AVULSA' : 'AVULSA',
+          natureza: selected.subtype === 'AVULSA' ? 'AVULSA' : 'RECORRENTE',
           origem: 'LANCAMENTO_MANUAL',
           cliente_id: clienteId || null,
           competencia_mes: m,
@@ -189,15 +180,15 @@ export function InlineLancamentoForm({ defaultMonth, defaultYear, onNeedsDedicat
           centro_custo_id: resolution.costCenterId,
           conta_id: resolution.accountId,
           notes: notes || null,
-          entity_id: entityIds[0] || null,
+          entity_id: !isEntrada ? entityIds[0] || null : null,
           created_by_user_id: user?.id,
           status: isPaidThis ? 'PAGO' : 'EM_ABERTO',
           valor_pago: isPaidThis ? valorParcela : null,
           data_pagamento: isPaidThis ? dataPagamento : null,
-          origem_receita: isAvulsaEntrada ? origemReceita : null,
-          documento_recebimento: isAvulsaEntrada ? documentoRecebimento : null,
+          origem_receita: isEntrada ? origemReceita : null,
+          documento_recebimento: isEntrada ? documentoRecebimento : null,
         } as any);
-        if (entityIds.length > 0 && result?.id) {
+        if (!isEntrada && entityIds.length > 0 && result?.id) {
           await saveEntities.mutateAsync({ transactionId: result.id, entityIds });
         }
         m++;
@@ -322,23 +313,6 @@ export function InlineLancamentoForm({ defaultMonth, defaultYear, onNeedsDedicat
               />
             )}
 
-        {selected && needsDedicated && (
-          <Card className="border-amber-300 bg-amber-50/40">
-            <CardContent className="p-3 flex items-start gap-2">
-              <AlertCircle className="w-4 h-4 text-amber-600 mt-0.5 shrink-0" />
-              <div className="flex-1 text-xs">
-                <p className="font-semibold text-amber-800">
-                  {selected.subtype === 'RECORRENTE' ? 'Entrada recorrente' : 'Despesa fixa'} requer cadastro completo.
-                </p>
-                <p className="text-amber-700/80">Vamos abrir o formulário dedicado para garantir as parcelas e regras.</p>
-              </div>
-              <Button size="sm" onClick={() => handleSubmit(false)}>
-                Continuar
-              </Button>
-            </CardContent>
-          </Card>
-        )}
-
         {selected && !needsDedicated && (
           <>
             {/* Badges removidos — agora exibidos no CategoryChip */}
@@ -430,8 +404,8 @@ export function InlineLancamentoForm({ defaultMonth, defaultYear, onNeedsDedicat
               </div>
             </div>
 
-            {/* Bloco contextual: Dados Fiscais (apenas Entrada Avulsa) */}
-            {isAvulsaEntrada && (
+            {/* Bloco contextual: Dados Fiscais (entradas) */}
+            {isEntrada && (
               <div className="border border-income/30 bg-income/5 rounded-lg p-3 space-y-3">
                 <div className="text-[11px] font-bold uppercase tracking-wide text-income flex items-center gap-1.5">
                   <Sparkles className="w-3 h-3" /> Dados Fiscais (obrigatório)
@@ -538,20 +512,20 @@ export function InlineLancamentoForm({ defaultMonth, defaultYear, onNeedsDedicat
               </div>
             </div>
 
-            {/* Entidade obrigatória para rastreamento operacional */}
-            <div>
-              {ramosEntity && (
-                <div className="mb-2 grid sm:grid-cols-3 gap-2">
-                  <Button
-                    type="button"
-                    size="sm"
-                    variant={entityIds.includes(ramosEntity.id) ? 'default' : 'outline'}
-                    onClick={() => setEntityIds([ramosEntity.id])}
-                    className="h-8 text-xs"
-                  >
-                    Própria Ramos
-                  </Button>
-                  {clienteId && (
+            {/* Entidade obrigatória apenas para despesas */}
+            {!isEntrada && (
+              <div>
+                {ramosEntity && (
+                  <div className="mb-2 grid sm:grid-cols-3 gap-2">
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant={entityIds.includes(ramosEntity.id) ? 'default' : 'outline'}
+                      onClick={() => setEntityIds([ramosEntity.id])}
+                      className="h-8 text-xs"
+                    >
+                      Própria Ramos
+                    </Button>
                     <Button
                       type="button"
                       size="sm"
@@ -561,48 +535,41 @@ export function InlineLancamentoForm({ defaultMonth, defaultYear, onNeedsDedicat
                     >
                       Cliente/grupo específico
                     </Button>
-                  )}
-                  <Button
-                    type="button"
-                    size="sm"
-                    variant="outline"
-                    onClick={() => setEntityIds([])}
-                    className="h-8 text-xs"
-                  >
-                    Escolher manualmente
-                  </Button>
-                </div>
-              )}
-              <MultiEntitySelector
-                selectedIds={entityIds}
-                onChange={setEntityIds}
-                label="Grupo / entidade de rastreamento *"
-              />
-              {entityIds.length === 0 && (
-                <p className="text-[10px] text-destructive mt-1">
-                  Informe se corresponde a um grupo/pessoa, ao cliente ou à própria Ramos Engenharia.
-                </p>
-              )}
-            </div>
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="outline"
+                      onClick={() => setEntityIds([])}
+                      className="h-8 text-xs"
+                    >
+                      Escolher manualmente
+                    </Button>
+                  </div>
+                )}
+                <MultiEntitySelector
+                  selectedIds={entityIds}
+                  onChange={setEntityIds}
+                  label="Grupo / entidade de rastreamento *"
+                />
+                {entityIds.length === 0 && (
+                  <p className="text-[10px] text-destructive mt-1">
+                    Informe se corresponde a um grupo/pessoa, ao cliente ou à própria Ramos Engenharia.
+                  </p>
+                )}
+              </div>
+            )}
 
-            {/* Parcelamento — só para despesa variável */}
-            {selected.subtype === 'VARIAVEL' && (
+            {/* Repetição simples */}
+            {canRepeat && (
               <div className="border rounded-lg p-3 space-y-2 bg-muted/20">
                 <div className="flex items-center justify-between">
                   <Label className="text-xs flex items-center gap-1.5">
-                    <Repeat className="w-3.5 h-3.5" /> Repetir / parcelar
+                    <Repeat className="w-3.5 h-3.5" /> Repetir lançamento
                   </Label>
                   <Switch checked={enableRep} onCheckedChange={setEnableRep} />
                 </div>
                 {enableRep && (
-                  <div className="grid grid-cols-2 gap-2">
-                    <Select value={repMode} onValueChange={(v) => setRepMode(v as any)}>
-                      <SelectTrigger className="h-8 text-xs"><SelectValue /></SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="parcelamento"><Split className="w-3 h-3 inline mr-1" /> Parcelar (divide)</SelectItem>
-                        <SelectItem value="repeticao"><Repeat className="w-3 h-3 inline mr-1" /> Repetir (mesmo valor)</SelectItem>
-                      </SelectContent>
-                    </Select>
+                  <div className="grid gap-2 sm:grid-cols-[220px_1fr]">
                     <Select value={repCount.toString()} onValueChange={(v) => setRepCount(parseInt(v))}>
                       <SelectTrigger className="h-8 text-xs"><SelectValue /></SelectTrigger>
                       <SelectContent>
@@ -611,6 +578,9 @@ export function InlineLancamentoForm({ defaultMonth, defaultYear, onNeedsDedicat
                         ))}
                       </SelectContent>
                     </Select>
+                    <p className="text-[11px] text-muted-foreground self-center">
+                      Repete o mesmo valor nas próximas competências. Não divide o valor.
+                    </p>
                   </div>
                 )}
               </div>
@@ -630,7 +600,7 @@ export function InlineLancamentoForm({ defaultMonth, defaultYear, onNeedsDedicat
                 <div className="grid sm:grid-cols-2 gap-x-4 gap-y-0.5 text-foreground/90">
                   <div><span className="text-muted-foreground">Categoria:</span> <strong>{selected.name}</strong></div>
                   <div><span className="text-muted-foreground">Conta:</span> <strong>{accObj?.name || '—'}</strong></div>
-                  <div><span className="text-muted-foreground">Valor:</span> <strong className={isEntrada ? 'text-income' : 'text-expense'}>R$ {valorNum.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</strong>{enableRep && repCount > 1 && <span className="text-muted-foreground"> × {repCount}{repMode === 'parcelamento' ? ' (parcelado)' : ' (repetido)'}</span>}</div>
+                  <div><span className="text-muted-foreground">Valor:</span> <strong className={isEntrada ? 'text-income' : 'text-expense'}>R$ {valorNum.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</strong>{enableRep && repCount > 1 && <span className="text-muted-foreground"> × {repCount} (repetido)</span>}</div>
                   <div><span className="text-muted-foreground">Vencimento:</span> <strong>{new Date(dataVenc + 'T00:00:00').toLocaleDateString('pt-BR')}</strong></div>
                   <div><span className="text-muted-foreground">Competência:</span> <strong>{String(competenciaMes).padStart(2, '0')}/{competenciaAno}</strong></div>
                   <div><span className="text-muted-foreground">Situação:</span> <strong>{status === 'PAGO' ? 'Pago' : 'Em aberto'}</strong></div>

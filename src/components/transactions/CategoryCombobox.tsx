@@ -37,6 +37,7 @@ const SUBTYPE_HEADERS: Record<string, { label: string; icon: any; color: string 
 export function CategoryCombobox({ categories, accounts, value, onChange, placeholder = 'Buscar categoria...', className }: Props) {
   const [open, setOpen] = useState(false);
   const [search, setSearch] = useState('');
+  const [typeFilter, setTypeFilter] = useState<'TODAS' | 'FIXA' | 'RECORRENTE' | 'VARIAVEL' | 'AVULSA'>('TODAS');
 
   const accountById = useMemo(() => {
     const m = new Map<string, string>();
@@ -46,7 +47,10 @@ export function CategoryCombobox({ categories, accounts, value, onChange, placeh
 
   const grouped = useMemo(() => {
     const q = normalizeForSearch(search);
-    const filtered = categories.filter(c => c.active !== false && (!q || normalizeForSearch(c.name).includes(q)));
+    const filtered = categories
+      .filter(c => c.active !== false)
+      .filter(c => typeFilter === 'TODAS' || c.subtype === typeFilter)
+      .filter(c => !q || normalizeForSearch(c.name).includes(q));
     const groups: Record<string, CategoryLite[]> = {
       'ENTRADA-RECORRENTE': [], 'ENTRADA-AVULSA': [],
       'SAIDA-FIXA': [], 'SAIDA-VARIAVEL': [],
@@ -56,7 +60,7 @@ export function CategoryCombobox({ categories, accounts, value, onChange, placeh
       if (groups[key]) groups[key].push(c);
     }
     return groups;
-  }, [categories, search]);
+  }, [categories, search, typeFilter]);
 
   const selected = categories.find(c => c.id === value);
 
@@ -82,6 +86,29 @@ export function CategoryCombobox({ categories, accounts, value, onChange, placeh
       <PopoverContent className="p-0 w-[--radix-popover-trigger-width] min-w-[320px]" align="start">
         <Command shouldFilter={false}>
           <CommandInput placeholder="Buscar categoria..." value={search} onValueChange={setSearch} />
+          <div className="flex gap-1.5 overflow-x-auto border-b p-2">
+            {[
+              ['TODAS', 'Todas'],
+              ['FIXA', 'Fixa'],
+              ['RECORRENTE', 'Recorrente'],
+              ['VARIAVEL', 'Variável'],
+              ['AVULSA', 'Avulsa'],
+            ].map(([key, label]) => (
+              <button
+                key={key}
+                type="button"
+                onClick={() => setTypeFilter(key as typeof typeFilter)}
+                className={cn(
+                  'rounded-full border px-2.5 py-1 text-[11px] font-medium transition-colors',
+                  typeFilter === key
+                    ? 'border-primary bg-primary text-primary-foreground'
+                    : 'border-border bg-background text-muted-foreground hover:bg-muted'
+                )}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
           <CommandList className="max-h-[360px]">
             <CommandEmpty>Nenhuma categoria encontrada.</CommandEmpty>
             {Object.entries(grouped).map(([key, items]) => {
