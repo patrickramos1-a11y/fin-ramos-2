@@ -22,18 +22,23 @@ const compact = (v: number) =>
   new Intl.NumberFormat('pt-BR', { notation: 'compact', maximumFractionDigits: 1 }).format(v);
 
 export function MasterEvolutionChart({ monthly, regime, onRegimeChange, onMonthClick }: Props) {
-  const data = monthly.map((m, i) => ({
-    name: MONTHS[i],
-    month: i + 1,
-    Receita: m.receita,
-    Despesa: m.despesa,
-    Resultado: m.resultado,
-  }));
+  let acumulado = 0;
+  const data = monthly.map((m, i) => {
+    acumulado += m.resultado;
+    return {
+      name: MONTHS[i],
+      month: i + 1,
+      Receita: m.receita,
+      Despesa: m.despesa,
+      'Resultado do mês': m.resultado,
+      'Resultado acumulado': acumulado,
+    };
+  });
 
   return (
     <Card>
       <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-        <CardTitle className="text-base lg:text-lg">Evolução Mensal — {monthly.length === 12 ? 'Ano completo' : ''}</CardTitle>
+        <CardTitle className="text-base lg:text-lg">Evolução Mensal — resultado acumulado</CardTitle>
         <div className="flex items-center gap-2">
           <Label htmlFor="regime-evol" className="text-xs text-muted-foreground">
             {regime === 'competencia' ? 'Competência' : 'Caixa'}
@@ -70,7 +75,13 @@ export function MasterEvolutionChart({ monthly, regime, onRegimeChange, onMonthC
               <Legend wrapperStyle={{ fontSize: 12 }} />
               <Bar dataKey="Receita" fill="hsl(var(--income))" radius={[4, 4, 0, 0]} />
               <Bar dataKey="Despesa" fill="hsl(var(--expense))" radius={[4, 4, 0, 0]} />
-              <Line type="monotone" dataKey="Resultado" stroke="hsl(var(--primary))" strokeWidth={2.5} dot={{ r: 3 }} />
+              <Line
+                type="monotone"
+                dataKey="Resultado acumulado"
+                stroke="hsl(var(--primary))"
+                strokeWidth={2.5}
+                dot={{ r: 3 }}
+              />
             </ComposedChart>
           </ResponsiveContainer>
         </div>
