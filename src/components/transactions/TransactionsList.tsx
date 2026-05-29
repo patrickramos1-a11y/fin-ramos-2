@@ -79,12 +79,78 @@ type ColumnKey = typeof ALL_COLUMNS[number]['key'];
 
 type PlannedTransactionRow = TransactionWithClient & {
   is_planned_transfer?: boolean;
+  is_synthetic_planned_occurrence?: boolean;
   planned_occurrence_id?: string;
   planned_transfer?: PlannedTransferWithOccurrences;
   planned_occurrence?: PlannedOccurrence;
   from_account_name?: string;
   to_account_name?: string;
 };
+
+function parseLocalDate(date: string) {
+  const [year, month, day] = date.split('-').map(Number);
+  return new Date(year, month - 1, day);
+}
+
+function toISODate(date: Date) {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+}
+
+function clampDay(year: number, month: number, day: number) {
+  return Math.min(day, new Date(year, month, 0).getDate());
+}
+
+function plannedDatesForMonth(plan: PlannedTransferWithOccurrences, year: number, month: number) {
+  const start = parseLocalDate(plan.start_date);
+  const end = plan.end_date ? parseLocalDate(plan.end_date) : new Date(year, 11, 31);
+  const windowStart = new Date(year, month - 1, 1);
+  const windowEnd = new Date(year, month, 0);
+  if (end < windowStart || start > windowEnd) return [];
+
+  const pushIfValid = (date: Date) => {
+    if (date >= start && date <= end && date >= windowStart && date <= windowEnd) {
+      return [toISODate(date)];
+    }
+    return [];
+  };
+
+  if (plan.frequency === 'AVULSA') return pushIfValid(start);
+
+  if (plan.frequency === 'MENSAL') {
+    const day = clampDay(year, month, plan.due_day || start.getDate());
+    return pushIfValid(new Date(year, month - 1, day));
+  }
+
+  if (plan.frequency === 'TRIMESTRAL') {
+    const diff = (year - start.getFullYear()) * 12 + (month - 1 - start.getMonth());
+    if (diff < 0 || diff % 3 !== 0) return [];
+    const day = clampDay(year, month, plan.due_day || start.getDate());
+    return pushIfValid(new Date(year, month - 1, day));
+  }
+
+  if (plan.frequency === 'ANUAL') {
+    if (month - 1 !== start.getMonth()) return [];
+    const day = clampDay(year, month, plan.due_day || start.getDate());
+    return pushIfValid(new Date(year, month - 1, day));
+  }
+
+  const intervalDays =
+    plan.frequency === 'SEMANAL' ? 7 :
+    plan.frequency === 'QUINZENAL' ? 14 :
+    plan.interval_days || 30;
+
+  const dates: string[] = [];
+  const cursor = new Date(start);
+  while (cursor < windowStart) cursor.setDate(cursor.getDate() + intervalDays);
+  while (cursor <= windowEnd && cursor <= end) {
+    dates.push(toISODate(cursor));
+    cursor.setDate(cursor.getDate() + intervalDays);
+  }
+  return dates;
+}
 
 interface TransactionsListProps {
   filters: TransactionFilters;
@@ -173,13 +239,27 @@ export function TransactionsList({ filters, bulkContext = 'GERAL' }: Transaction
       if (plan.status !== 'ATIVO') return [];
       const natureza = plan.frequency === 'AVULSA' ? 'AVULSA' : 'RECORRENTE';
       if (filters.natureza && filters.natureza !== natureza) return [];
-
-      return plan.occurrences
+      const existingOccurrences = plan.occurrences
         .filter((occ) => occ.status === 'PLANEJADA' || occ.status === 'ATRASADA')
         .filter((occ) => {
           const [occYear, occMonth] = occ.scheduled_date.split('-').map(Number);
           return occYear === year && occMonth === month;
-        })
+        });
+      const occurrences: Array<PlannedOccurrence & { synthetic?: boolean }> = existingOccurrences.length > 0
+        ? existingOccurrences
+        : plannedDatesForMonth(plan, year, month).map((date) => ({
+            id: `synthetic-${plan.id}-${date}`,
+            planned_transfer_id: plan.id,
+            scheduled_date: date,
+            expected_amount: Number(plan.amount) || 0,
+            status: date < new Date().toISOString().slice(0, 10) ? 'ATRASADA' : 'PLANEJADA',
+            executed_transfer_id: null,
+            executed_at: null,
+            notes: plan.notes,
+            synthetic: true,
+          }));
+
+      return occurrences
         .map((occ) => {
           const fromName = accountMap.get(plan.from_account_id) || 'Origem';
           const toName = accountMap.get(plan.to_account_id) || 'Destino';
@@ -224,9 +304,10 @@ export function TransactionsList({ filters, bulkContext = 'GERAL' }: Transaction
             expense_type: null,
             category_subtype: natureza === 'RECORRENTE' ? 'FIXA' : 'AVULSA',
             is_planned_transfer: true,
-            planned_occurrence_id: occ.id,
+            is_synthetic_planned_occurrence: Boolean(occ.synthetic),
+            planned_occurrence_id: occ.synthetic ? undefined : occ.id,
             planned_transfer: plan,
-            planned_occurrence: occ,
+            planned_occurrence: occ as PlannedOccurrence,
             from_account_name: fromName,
             to_account_name: toName,
           } as PlannedTransactionRow;
@@ -334,11 +415,31 @@ export function TransactionsList({ filters, bulkContext = 'GERAL' }: Transaction
     setPlannedExecAmount(Number(row.valor) || 0);
   };
 
-  const handleConfirmPlannedExecution = () => {
-    if (!plannedToExecute?.planned_occurrence_id) return;
+  const handleConfirmPlannedExecution = async () => {
+    if (!plannedToExecute?.planned_transfer?.id) return;
+    let occurrenceId = plannedToExecute.planned_occurrence_id;
+    if (!occurrenceId && plannedToExecute.is_synthetic_planned_occurrence) {
+      const { data, error } = await supabase
+        .from('planned_transfer_occurrences' as any)
+        .insert({
+          planned_transfer_id: plannedToExecute.planned_transfer.id,
+          scheduled_date: plannedToExecute.data_vencimento,
+          expected_amount: plannedExecAmount || plannedToExecute.valor,
+          status: 'PLANEJADA',
+          notes: plannedToExecute.notes || null,
+        })
+        .select('id')
+        .single();
+      if (error) {
+        toast.error('Erro ao criar ocorrência planejada', { description: error.message });
+        return;
+      }
+      occurrenceId = (data as any).id;
+    }
+    if (!occurrenceId) return;
     executeOccurrence.mutate(
       {
-        occurrence_id: plannedToExecute.planned_occurrence_id,
+        occurrence_id: occurrenceId,
         real_date: plannedExecDate,
         amount: plannedExecAmount,
       },
