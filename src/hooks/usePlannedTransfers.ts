@@ -13,6 +13,23 @@ export type PlannedFrequency =
 
 export type PlannedStatus = 'ATIVO' | 'PAUSADO' | 'ENCERRADO';
 export type OccurrenceStatus = 'PLANEJADA' | 'EXECUTADA' | 'ATRASADA' | 'CANCELADA';
+export type PlannedAccountingMode = 'TRANSFER_ONLY' | 'AS_EXPENSE';
+
+const ACCOUNTING_MODE_RE = /\[\[ACCOUNTING_MODE:(TRANSFER_ONLY|AS_EXPENSE)\]\]\s*/;
+
+export function getPlannedAccountingMode(notes?: string | null): PlannedAccountingMode {
+  const match = notes?.match(ACCOUNTING_MODE_RE);
+  return (match?.[1] as PlannedAccountingMode | undefined) || 'TRANSFER_ONLY';
+}
+
+export function stripPlannedAccountingMode(notes?: string | null) {
+  return (notes || '').replace(ACCOUNTING_MODE_RE, '').trim();
+}
+
+export function withPlannedAccountingMode(notes: string | undefined, mode: PlannedAccountingMode) {
+  const clean = stripPlannedAccountingMode(notes);
+  return `[[ACCOUNTING_MODE:${mode}]]${clean ? `\n${clean}` : ''}`;
+}
 
 export interface PlannedTransfer {
   id: string;
@@ -29,6 +46,8 @@ export interface PlannedTransfer {
   status: PlannedStatus;
   created_at: string;
   updated_at: string;
+  accounting_mode?: PlannedAccountingMode;
+  display_notes?: string;
 }
 
 export interface PlannedOccurrence {
@@ -83,6 +102,8 @@ export function usePlannedTransfers() {
         return {
           ...p,
           amount: Number(p.amount),
+          accounting_mode: getPlannedAccountingMode(p.notes),
+          display_notes: stripPlannedAccountingMode(p.notes),
           occurrences: list,
           next_occurrence: next,
         } as PlannedTransferWithOccurrences;
@@ -115,6 +136,7 @@ interface CreateInput {
   amount: number;
   description?: string;
   notes?: string;
+  accounting_mode?: PlannedAccountingMode;
   frequency: PlannedFrequency;
   interval_days?: number | null;
   start_date: string;
@@ -133,7 +155,7 @@ export function useCreatePlannedTransfer() {
           to_account_id: input.to_account_id,
           amount: input.amount,
           description: input.description ?? null,
-          notes: input.notes ?? null,
+          notes: withPlannedAccountingMode(input.notes, input.accounting_mode || 'TRANSFER_ONLY'),
           frequency: input.frequency,
           interval_days: input.interval_days ?? null,
           start_date: input.start_date,
@@ -160,7 +182,12 @@ export function useUpdatePlannedTransfer() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: async ({ id, ...patch }: { id: string } & Partial<CreateInput> & { status?: PlannedStatus }) => {
-      const { error } = await supabase.from('planned_transfers' as any).update(patch).eq('id', id);
+      const payload: Record<string, unknown> = { ...patch };
+      if ('notes' in patch || 'accounting_mode' in patch) {
+        payload.notes = withPlannedAccountingMode(patch.notes, patch.accounting_mode || 'TRANSFER_ONLY');
+        delete payload.accounting_mode;
+      }
+      const { error } = await supabase.from('planned_transfers' as any).update(payload).eq('id', id);
       if (error) throw error;
     },
     onSuccess: () => {

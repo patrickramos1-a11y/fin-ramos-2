@@ -172,7 +172,7 @@ export function PlannedTransfersTab() {
             Transferências planejadas
           </h3>
           <p className="text-xs text-muted-foreground">
-            Recorrências entre contas. Não impactam DRE.
+            Recorrências entre contas. Escolha quais também aparecem como provisão em Transações.
           </p>
         </div>
         <Button size="sm" onClick={() => { setEditing(null); setModalOpen(true); }}>
@@ -245,6 +245,17 @@ export function PlannedTransfersTab() {
                           {p.status === 'PAUSADO' && (
                             <Badge variant="secondary" className="text-[10px] h-4">Pausada</Badge>
                           )}
+                          <Badge
+                            variant="outline"
+                            className={cn(
+                              'text-[10px] h-4',
+                              p.accounting_mode === 'AS_EXPENSE'
+                                ? 'border-expense/30 text-expense'
+                                : 'text-muted-foreground',
+                            )}
+                          >
+                            {p.accounting_mode === 'AS_EXPENSE' ? 'Provisão despesa' : 'Só transferência'}
+                          </Badge>
                           {p.status === 'ENCERRADO' && (
                             <Badge variant="outline" className="text-[10px] h-4 text-muted-foreground">
                               Encerrada

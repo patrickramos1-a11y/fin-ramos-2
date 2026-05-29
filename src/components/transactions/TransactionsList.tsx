@@ -237,6 +237,7 @@ export function TransactionsList({ filters, bulkContext = 'GERAL' }: Transaction
 
     return plannedTransfers.flatMap((plan) => {
       if (plan.status !== 'ATIVO') return [];
+      if (plan.accounting_mode !== 'AS_EXPENSE') return [];
       const natureza = plan.frequency === 'AVULSA' ? 'AVULSA' : 'RECORRENTE';
       if (filters.natureza && filters.natureza !== natureza) return [];
       const existingOccurrences = plan.occurrences

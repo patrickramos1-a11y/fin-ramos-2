@@ -24,6 +24,9 @@ import { useAccounts } from '@/hooks/useFinancialConfig';
 import {
   useCreatePlannedTransfer,
   useUpdatePlannedTransfer,
+  getPlannedAccountingMode,
+  stripPlannedAccountingMode,
+  type PlannedAccountingMode,
   type PlannedFrequency,
   type PlannedTransfer,
 } from '@/hooks/usePlannedTransfers';
@@ -59,6 +62,7 @@ export function PlannedTransferModal({ open, onClose, planned }: Props) {
     start_date: today,
     end_date: '',
     due_day: 10,
+    accounting_mode: 'TRANSFER_ONLY' as PlannedAccountingMode,
     description: '',
     notes: '',
   });
@@ -75,15 +79,25 @@ export function PlannedTransferModal({ open, onClose, planned }: Props) {
         start_date: planned.start_date,
         end_date: planned.end_date ?? '',
         due_day: planned.due_day ?? 10,
+        accounting_mode: getPlannedAccountingMode(planned.notes),
         description: planned.description ?? '',
-        notes: planned.notes ?? '',
+        notes: stripPlannedAccountingMode(planned.notes),
       });
     } else {
       const banc = (accounts || []).find((a) => /banc/i.test(a.name));
-      setForm((f) => ({
-        ...f,
+      setForm({
         from_account_id: banc?.id ?? (accounts?.[0]?.id ?? ''),
-      }));
+        to_account_id: '',
+        amount: 0,
+        frequency: 'MENSAL',
+        interval_days: 30,
+        start_date: today,
+        end_date: '',
+        due_day: 10,
+        accounting_mode: 'TRANSFER_ONLY',
+        description: '',
+        notes: '',
+      });
     }
   }, [open, planned, accounts]);
 
@@ -107,6 +121,7 @@ export function PlannedTransferModal({ open, onClose, planned }: Props) {
       start_date: form.start_date,
       end_date: form.end_date || null,
       due_day: form.due_day,
+      accounting_mode: form.accounting_mode,
       description: form.description || undefined,
       notes: form.notes || undefined,
     };
@@ -175,6 +190,40 @@ export function PlannedTransferModal({ open, onClose, planned }: Props) {
             <p className="mt-1 text-[11px] text-muted-foreground">
               Entrada por centavos: 100000 vira R$ 1.000,00.
             </p>
+          </div>
+
+          <div className="rounded-xl border bg-muted/20 p-3 space-y-2">
+            <Label>Como este planejamento deve aparecer?</Label>
+            <div className="grid sm:grid-cols-2 gap-2">
+              <button
+                type="button"
+                onClick={() => setForm({ ...form, accounting_mode: 'TRANSFER_ONLY' })}
+                className={`rounded-lg border p-3 text-left transition-colors ${
+                  form.accounting_mode === 'TRANSFER_ONLY'
+                    ? 'border-primary bg-primary/10'
+                    : 'border-border bg-background'
+                }`}
+              >
+                <p className="text-sm font-semibold">Só transferência</p>
+                <p className="text-xs text-muted-foreground">
+                  Movimenta saldo entre contas, mas não entra como despesa nos lançamentos.
+                </p>
+              </button>
+              <button
+                type="button"
+                onClick={() => setForm({ ...form, accounting_mode: 'AS_EXPENSE' })}
+                className={`rounded-lg border p-3 text-left transition-colors ${
+                  form.accounting_mode === 'AS_EXPENSE'
+                    ? 'border-expense bg-expense/10'
+                    : 'border-border bg-background'
+                }`}
+              >
+                <p className="text-sm font-semibold">Provisionar como despesa</p>
+                <p className="text-xs text-muted-foreground">
+                  Aparece em Transações/Em aberto para acompanhamento operacional.
+                </p>
+              </button>
+            </div>
           </div>
 
           <div className="grid grid-cols-2 gap-3">
