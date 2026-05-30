@@ -90,7 +90,7 @@ export function AccountDetailPage({ accountId, onBack, onSelectAccount }: Props)
   const account = accounts?.find((a) => a.id === accountId);
   const { data: snapshots } = useAccountsSnapshot(year, month);
   const snapshot = snapshots?.[accountId];
-  const { data, isLoading } = useAccountDetail(accountId, year, month);
+  const { data, isLoading } = useAccountDetail(accountId, year, month, 'caixa');
 
   if (!account) {
     return (
@@ -118,6 +118,7 @@ export function AccountDetailPage({ accountId, onBack, onSelectAccount }: Props)
 
   const color = account.category?.color || 'hsl(var(--primary))';
   const Trend = variacao > 0 ? TrendingUp : variacao < 0 ? TrendingDown : Wallet;
+  const isCurrentPeriod = year === now.getFullYear() && month === now.getMonth() + 1;
 
   return (
     <div className="space-y-4">
@@ -166,7 +167,9 @@ export function AccountDetailPage({ accountId, onBack, onSelectAccount }: Props)
             </div>
           </div>
           <div className="text-right">
-            <p className="text-[10px] uppercase text-muted-foreground">Saldo atual</p>
+            <p className="text-[10px] uppercase text-muted-foreground">
+              {isCurrentPeriod ? 'Saldo atual' : 'Saldo final do mês'}
+            </p>
             <p className={cn('text-2xl font-bold', saldoFim >= 0 ? 'text-foreground' : 'text-destructive')}>
               {fmt(saldoFim)}
             </p>
@@ -275,7 +278,7 @@ export function AccountDetailPage({ accountId, onBack, onSelectAccount }: Props)
 
         {/* MOVIMENTOS */}
         <TabsContent value="movimentos" className="mt-3">
-          <AccountMovementsTable accountId={accountId} year={year} month={month} />
+          <AccountMovementsTable accountId={accountId} year={year} month={month} mode="caixa" />
         </TabsContent>
 
         {/* TRANSFERÊNCIAS */}

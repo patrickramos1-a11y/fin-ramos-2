@@ -26,7 +26,7 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import { cn } from '@/lib/utils';
-import { useAccountDetail, type AccountTx } from '@/hooks/useAccountDetail';
+import { useAccountDetail, type AccountTx, type DetailPeriodMode } from '@/hooks/useAccountDetail';
 import { ConvertToTransferModal } from './ConvertToTransferModal';
 
 const fmt = (v: number) =>
@@ -45,10 +45,11 @@ interface Props {
   accountId: string;
   year: number;
   month: number;
+  mode?: DetailPeriodMode;
 }
 
-export function AccountMovementsTable({ accountId, year, month }: Props) {
-  const { data, isLoading } = useAccountDetail(accountId, year, month);
+export function AccountMovementsTable({ accountId, year, month, mode = 'caixa' }: Props) {
+  const { data, isLoading } = useAccountDetail(accountId, year, month, mode);
   const [search, setSearch] = useState('');
   const [type, setType] = useState<TypeFilter>('all');
   const [status, setStatus] = useState<StatusFilter>('all');
@@ -120,7 +121,14 @@ export function AccountMovementsTable({ accountId, year, month }: Props) {
   };
 
   const exportCSV = () => {
-    const header = ['Data', 'Descrição', 'Categoria', 'Tipo', 'Status', 'Valor'];
+    const header = [
+      mode === 'caixa' ? 'Data de pagamento' : 'Data',
+      'Descrição',
+      'Categoria',
+      'Tipo',
+      'Status',
+      'Valor',
+    ];
     const rows = filtered.map((t) => [
       fmtDate(t.data_pagamento || t.data_vencimento),
       (t.descricao || '').replace(/"/g, '""'),
@@ -143,6 +151,15 @@ export function AccountMovementsTable({ accountId, year, month }: Props) {
 
   return (
     <div className="space-y-3">
+      <div className="rounded-lg border border-primary/20 bg-primary/5 px-3 py-2 text-xs text-muted-foreground">
+        <span className="font-medium text-foreground">
+          {mode === 'caixa' ? 'Regime de caixa' : 'Regime de competência'}:
+        </span>{' '}
+        {mode === 'caixa'
+          ? 'mostra somente lançamentos pagos pela data de pagamento, alinhado aos cards de saldo acima.'
+          : 'mostra lançamentos pela competência do mês, mesmo que tenham sido pagos em outro período.'}
+      </div>
+
       {/* Filters bar */}
       <div className="flex flex-wrap items-center gap-2">
         <div className="relative flex-1 min-w-[180px]">
@@ -236,7 +253,7 @@ export function AccountMovementsTable({ accountId, year, month }: Props) {
                     className="flex items-center gap-1 hover:text-foreground"
                     onClick={() => toggleSort('date')}
                   >
-                    Data <ArrowUpDown className="w-3 h-3" />
+                    {mode === 'caixa' ? 'Pagamento' : 'Data'} <ArrowUpDown className="w-3 h-3" />
                   </button>
                 </TableHead>
                 <TableHead>Descrição</TableHead>

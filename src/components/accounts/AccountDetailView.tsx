@@ -82,9 +82,10 @@ export function AccountDetailView({
   onYearChange,
   onMonthChange,
 }: Props) {
-  const { data, isLoading } = useAccountDetail(account.id, year, month);
+  const { data, isLoading } = useAccountDetail(account.id, year, month, 'caixa');
   const [adjustOpen, setAdjustOpen] = useState(false);
   const [transferOpen, setTransferOpen] = useState(false);
+  const now = new Date();
 
   const saldoFim = snapshot?.saldo_fim_mes ?? Number(account.current_balance) ?? 0;
   const saldoIni = snapshot?.saldo_inicio_mes ?? saldoFim;
@@ -96,6 +97,7 @@ export function AccountDetailView({
 
   const color = account.category?.color || 'hsl(var(--primary))';
   const Trend = variacao > 0 ? TrendingUp : variacao < 0 ? TrendingDown : Wallet;
+  const isCurrentPeriod = year === now.getFullYear() && month === now.getMonth() + 1;
 
   return (
     <div className="space-y-4">
@@ -124,7 +126,9 @@ export function AccountDetailView({
             </div>
           </div>
           <div className="text-right">
-            <p className="text-[10px] uppercase text-muted-foreground">Saldo atual</p>
+            <p className="text-[10px] uppercase text-muted-foreground">
+              {isCurrentPeriod ? 'Saldo atual' : 'Saldo final do mês'}
+            </p>
             <p className={cn('text-2xl font-bold', saldoFim >= 0 ? 'text-foreground' : 'text-destructive')}>
               {fmt(saldoFim)}
             </p>

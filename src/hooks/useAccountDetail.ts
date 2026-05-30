@@ -52,7 +52,7 @@ export function useAccountDetail(
   accountId: string | null,
   year: number,
   month: number,
-  mode: DetailPeriodMode = 'competencia',
+  mode: DetailPeriodMode = 'caixa',
 ) {
   return useQuery({
     queryKey: ['account-detail-v2', accountId, year, month, mode],
