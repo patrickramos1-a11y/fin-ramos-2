@@ -114,20 +114,10 @@ export function AccountDetailPage({ accountId, onBack, onSelectAccount }: Props)
   const saidasCaixa = snapshot?.saidas_mes ?? 0;
   const trIn = snapshot?.transferencias_in ?? 0;
   const trOut = snapshot?.transferencias_out ?? 0;
-  const competencia = (data?.all || []).reduce(
-    (acc, t) => {
-      const value = Number(t.valor) || 0;
-      acc.itens += 1;
-      if (t.tipo_movimento === 'ENTRADA') acc.entradas += value;
-      else acc.saidas += value;
-      return acc;
-    },
-    { entradas: 0, saidas: 0, itens: 0 },
-  );
-  const resultadoCompetencia = competencia.entradas - competencia.saidas;
+  const entradasPeriodo = entradasCaixa + trIn;
 
   // Validação contábil: saldoIni + entradas + trIn − saídas − trOut === saldoFim
-  const expectedFim = saldoIni + entradasCaixa + trIn - saidasCaixa - trOut;
+  const expectedFim = saldoIni + entradasPeriodo - saidasCaixa - trOut;
   const diff = expectedFim - saldoFim;
   const consistent = Math.abs(diff) < 0.01;
 
@@ -219,17 +209,23 @@ export function AccountDetailPage({ accountId, onBack, onSelectAccount }: Props)
         </div>
       </div>
 
-      {/* KPIs */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-2">
-        <KPI label="Itens da competência" value={competencia.itens} icon={Wallet} format="number" />
-        <KPI label="Receitas da competência" value={competencia.entradas} tone="in" icon={ArrowDownLeft} />
-        <KPI label="Despesas da competência" value={competencia.saidas} tone="out" icon={ArrowUpRight} />
+      {/* Fechamento de caixa */}
+      <div className="grid grid-cols-2 lg:grid-cols-5 gap-2">
+        <KPI label="Saldo anterior" value={saldoIni} icon={Wallet} />
         <KPI
-          label="Resultado da competência"
-          value={resultadoCompetencia}
+          label="Entradas do período"
+          value={entradasPeriodo}
+          tone="in"
+          icon={ArrowDownLeft}
+          subtitle={`${fmt(entradasCaixa)} receitas + ${fmt(trIn)} transf.`}
+        />
+        <KPI label="Despesas do período" value={saidasCaixa} tone="out" icon={ArrowUpRight} />
+        <KPI label="Transf. enviadas" value={trOut} tone="transfer" icon={ArrowLeftRight} />
+        <KPI
+          label="Saldo final"
+          value={saldoFim}
           icon={Wallet}
-          tone={resultadoCompetencia >= 0 ? 'in' : 'out'}
-          subtitle="Mesmo critério da página Transações"
+          subtitle={`${variacao >= 0 ? '+' : ''}${fmt(variacao)} variação`}
         />
       </div>
 
@@ -249,7 +245,7 @@ export function AccountDetailPage({ accountId, onBack, onSelectAccount }: Props)
         )}
         <span className="font-medium">Saldo bancário/caixa:</span>
         <span className="font-mono">
-          {fmt(saldoIni)} + {fmt(entradasCaixa)} + {fmt(trIn)} − {fmt(saidasCaixa)} − {fmt(trOut)} ={' '}
+          {fmt(saldoIni)} + {fmt(entradasPeriodo)} − {fmt(saidasCaixa)} − {fmt(trOut)} ={' '}
           <strong>{fmt(expectedFim)}</strong>
         </span>
         <span>·</span>
@@ -262,7 +258,7 @@ export function AccountDetailPage({ accountId, onBack, onSelectAccount }: Props)
           </span>
         )}
         <span className="basis-full text-muted-foreground">
-          Este fechamento usa pagamentos e transferências reais; os cards acima usam competência para bater com Transações.
+          Entradas do período = receitas pagas + transferências recebidas. A aba Movimentos segue por competência para bater com Transações.
         </span>
       </div>
 

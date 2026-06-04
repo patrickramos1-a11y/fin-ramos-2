@@ -97,17 +97,7 @@ export function AccountDetailView({
   const saidasCaixa = snapshot?.saidas_mes ?? 0;
   const trIn = snapshot?.transferencias_in ?? 0;
   const trOut = snapshot?.transferencias_out ?? 0;
-  const competencia = (data?.all || []).reduce(
-    (acc, t) => {
-      const value = Number(t.valor) || 0;
-      acc.itens += 1;
-      if (t.tipo_movimento === 'ENTRADA') acc.entradas += value;
-      else acc.saidas += value;
-      return acc;
-    },
-    { entradas: 0, saidas: 0, itens: 0 },
-  );
-  const resultadoCompetencia = competencia.entradas - competencia.saidas;
+  const entradasPeriodo = entradasCaixa + trIn;
 
   const color = account.category?.color || 'hsl(var(--primary))';
   const Trend = variacao > 0 ? TrendingUp : variacao < 0 ? TrendingDown : Wallet;
@@ -177,25 +167,31 @@ export function AccountDetailView({
         </div>
       </div>
 
-      {/* KPIs */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-2">
-        <KPI label="Itens da competência" value={competencia.itens} icon={Wallet} format="number" />
-        <KPI label="Receitas da competência" value={competencia.entradas} tone="in" icon={ArrowDownLeft} />
-        <KPI label="Despesas da competência" value={competencia.saidas} tone="out" icon={ArrowUpRight} />
+      {/* Fechamento de caixa */}
+      <div className="grid grid-cols-2 lg:grid-cols-5 gap-2">
+        <KPI label="Saldo anterior" value={saldoIni} icon={Wallet} />
         <KPI
-          label="Resultado da competência"
-          value={resultadoCompetencia}
+          label="Entradas do período"
+          value={entradasPeriodo}
+          tone="in"
+          icon={ArrowDownLeft}
+          subtitle={`${fmt(entradasCaixa)} receitas + ${fmt(trIn)} transf.`}
+        />
+        <KPI label="Despesas do período" value={saidasCaixa} tone="out" icon={ArrowUpRight} />
+        <KPI label="Transf. enviadas" value={trOut} tone="transfer" icon={ArrowLeftRight} />
+        <KPI
+          label="Saldo final"
+          value={saldoFim}
           icon={Wallet}
-          tone={resultadoCompetencia >= 0 ? 'in' : 'out'}
-          subtitle="Mesmo critério da página Transações"
+          subtitle={`${variacao >= 0 ? '+' : ''}${fmt(variacao)} variação`}
         />
       </div>
 
       <div className="rounded-lg border border-primary/30 bg-primary/5 p-2.5 text-xs text-muted-foreground">
         <span className="font-medium text-foreground">Saldo bancário/caixa:</span>{' '}
-        {fmt(saldoIni)} + {fmt(entradasCaixa)} + {fmt(trIn)} − {fmt(saidasCaixa)} − {fmt(trOut)} ={' '}
-        <strong className="text-foreground">{fmt(saldoFim)}</strong>. Este fechamento usa pagamentos e
-        transferências reais; os cards acima usam competência.
+        {fmt(saldoIni)} + {fmt(entradasPeriodo)} − {fmt(saidasCaixa)} − {fmt(trOut)} ={' '}
+        <strong className="text-foreground">{fmt(saldoFim)}</strong>. Entradas do período = receitas pagas +
+        transferências recebidas; Movimentos segue por competência.
       </div>
 
       {/* Tabs */}

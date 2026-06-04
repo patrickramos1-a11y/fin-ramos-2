@@ -38,7 +38,9 @@ function useApprovalCount() {
       const { count, error } = await supabase
         .from('transactions')
         .select('*', { count: 'exact', head: true })
-        .eq('approval_status', 'pendente' as any);
+        .eq('approval_status', 'pendente' as any)
+        .neq('origem', 'DESPESA_FIXA')
+        .neq('origem', 'CONTRATO_RECORRENTE');
       if (error) return 0;
       return count || 0;
     },
