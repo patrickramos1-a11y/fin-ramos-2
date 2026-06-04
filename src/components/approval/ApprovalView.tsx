@@ -201,10 +201,6 @@ export function ApprovalView() {
         `)
         .order('created_at', { ascending: false });
 
-      query = query
-        .neq('origem', 'DESPESA_FIXA')
-        .neq('origem', 'CONTRATO_RECORRENTE');
-
       if (filterStatus !== 'todos') {
         query = query.eq('approval_status', filterStatus as any);
       }

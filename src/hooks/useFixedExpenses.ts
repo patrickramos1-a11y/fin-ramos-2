@@ -184,8 +184,6 @@ export function useGenerateFixedExpenseTransactions() {
             tipo_movimento: 'SAIDA' as const,
             natureza: 'RECORRENTE' as const,
             origem: 'DESPESA_FIXA' as const,
-            approval_status: 'aprovado' as const,
-            approved_at: new Date().toISOString(),
             fixed_expense_id: e.id,
             competencia_mes: month,
             competencia_ano: year,
