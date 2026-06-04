@@ -7,7 +7,6 @@ import {
   ArrowDownLeft,
   ArrowUpRight,
   ArrowLeftRight,
-  AlertTriangle,
   SlidersHorizontal,
   Banknote,
   TrendingDown,
@@ -47,12 +46,14 @@ function KPI({
   icon: Icon,
   tone = 'neutral',
   subtitle,
+  format = 'currency',
 }: {
   label: string;
   value: number;
   icon?: any;
   tone?: 'neutral' | 'in' | 'out' | 'transfer';
   subtitle?: string;
+  format?: 'currency' | 'number';
 }) {
   const color =
     tone === 'in'
@@ -68,7 +69,9 @@ function KPI({
         {Icon && <Icon className="w-3 h-3" />}
         {label}
       </div>
-      <p className={cn('text-base font-bold mt-1', color)}>{fmt(value)}</p>
+      <p className={cn('text-base font-bold mt-1', color)}>
+        {format === 'number' ? value : fmt(value)}
+      </p>
       {subtitle && <p className="text-[10px] text-muted-foreground mt-0.5">{subtitle}</p>}
     </div>
   );
@@ -82,7 +85,7 @@ export function AccountDetailView({
   onYearChange,
   onMonthChange,
 }: Props) {
-  const { data, isLoading } = useAccountDetail(account.id, year, month, 'caixa');
+  const { data, isLoading } = useAccountDetail(account.id, year, month, 'competencia');
   const [adjustOpen, setAdjustOpen] = useState(false);
   const [transferOpen, setTransferOpen] = useState(false);
   const now = new Date();
@@ -90,10 +93,21 @@ export function AccountDetailView({
   const saldoFim = snapshot?.saldo_fim_mes ?? Number(account.current_balance) ?? 0;
   const saldoIni = snapshot?.saldo_inicio_mes ?? saldoFim;
   const variacao = snapshot?.variacao ?? 0;
-  const entradas = snapshot?.entradas_mes ?? 0;
-  const saidas = snapshot?.saidas_mes ?? 0;
+  const entradasCaixa = snapshot?.entradas_mes ?? 0;
+  const saidasCaixa = snapshot?.saidas_mes ?? 0;
   const trIn = snapshot?.transferencias_in ?? 0;
   const trOut = snapshot?.transferencias_out ?? 0;
+  const competencia = (data?.all || []).reduce(
+    (acc, t) => {
+      const value = Number(t.valor) || 0;
+      acc.itens += 1;
+      if (t.tipo_movimento === 'ENTRADA') acc.entradas += value;
+      else acc.saidas += value;
+      return acc;
+    },
+    { entradas: 0, saidas: 0, itens: 0 },
+  );
+  const resultadoCompetencia = competencia.entradas - competencia.saidas;
 
   const color = account.category?.color || 'hsl(var(--primary))';
   const Trend = variacao > 0 ? TrendingUp : variacao < 0 ? TrendingDown : Wallet;
@@ -164,18 +178,24 @@ export function AccountDetailView({
       </div>
 
       {/* KPIs */}
-      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2">
-        <KPI label="Saldo inicial" value={saldoIni} icon={Wallet} />
-        <KPI label="Recebimentos" value={entradas} tone="in" icon={ArrowDownLeft} />
-        <KPI label="Transf. recebidas" value={trIn} tone="transfer" icon={ArrowLeftRight} />
-        <KPI label="Despesas" value={saidas} tone="out" icon={ArrowUpRight} />
-        <KPI label="Transf. enviadas" value={trOut} tone="transfer" icon={ArrowLeftRight} />
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-2">
+        <KPI label="Itens da competência" value={competencia.itens} icon={Wallet} format="number" />
+        <KPI label="Receitas da competência" value={competencia.entradas} tone="in" icon={ArrowDownLeft} />
+        <KPI label="Despesas da competência" value={competencia.saidas} tone="out" icon={ArrowUpRight} />
         <KPI
-          label="Saldo final"
-          value={saldoFim}
+          label="Resultado da competência"
+          value={resultadoCompetencia}
           icon={Wallet}
-          subtitle={`${variacao >= 0 ? '+' : ''}${fmt(variacao)} variação`}
+          tone={resultadoCompetencia >= 0 ? 'in' : 'out'}
+          subtitle="Mesmo critério da página Transações"
         />
+      </div>
+
+      <div className="rounded-lg border border-primary/30 bg-primary/5 p-2.5 text-xs text-muted-foreground">
+        <span className="font-medium text-foreground">Saldo bancário/caixa:</span>{' '}
+        {fmt(saldoIni)} + {fmt(entradasCaixa)} + {fmt(trIn)} − {fmt(saidasCaixa)} − {fmt(trOut)} ={' '}
+        <strong className="text-foreground">{fmt(saldoFim)}</strong>. Este fechamento usa pagamentos e
+        transferências reais; os cards acima usam competência.
       </div>
 
       {/* Tabs */}
@@ -223,16 +243,14 @@ export function AccountDetailView({
         <TabsContent value="movimentos" className="mt-3 space-y-1">
           {isLoading ? (
             <Skeleton className="h-40 w-full" />
-          ) : data?.paid.length === 0 ? (
+          ) : data?.all.length === 0 ? (
             <p className="text-sm text-muted-foreground py-6 text-center">
-              Sem movimentos pagos no período.
+              Sem movimentos na competência.
             </p>
           ) : (
-            data?.paid.map((t) => {
-              const v = t.valor_pago ?? t.valor;
+            data?.all.map((t) => {
+              const v = t.valor;
               const isIn = t.tipo_movimento === 'ENTRADA';
-              const ratio = t.valor > 0 ? (t.valor_pago ?? t.valor) / t.valor : 1;
-              const suspeito = ratio > 50;
               return (
                 <div
                   key={t.id}
@@ -249,14 +267,9 @@ export function AccountDetailView({
                   <div className="min-w-0 flex-1">
                     <div className="flex items-center gap-2">
                       <p className="text-sm font-medium truncate">{t.descricao || '—'}</p>
-                      {suspeito && (
-                        <Badge variant="destructive" className="h-5 text-[10px] gap-1">
-                          <AlertTriangle className="w-3 h-3" /> suspeito
-                        </Badge>
-                      )}
                     </div>
                     <p className="text-[11px] text-muted-foreground truncate">
-                      {fmtDate(t.data_pagamento)} · {t.category_name || 'Sem categoria'}
+                      Venc. {fmtDate(t.data_vencimento)} · {t.category_name || 'Sem categoria'}
                     </p>
                   </div>
                   <p

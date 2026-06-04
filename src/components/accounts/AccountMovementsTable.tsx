@@ -48,7 +48,7 @@ interface Props {
   mode?: DetailPeriodMode;
 }
 
-export function AccountMovementsTable({ accountId, year, month, mode = 'caixa' }: Props) {
+export function AccountMovementsTable({ accountId, year, month, mode = 'competencia' }: Props) {
   const { data, isLoading } = useAccountDetail(accountId, year, month, mode);
   const [search, setSearch] = useState('');
   const [type, setType] = useState<TypeFilter>('all');
@@ -58,10 +58,11 @@ export function AccountMovementsTable({ accountId, year, month, mode = 'caixa' }
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc');
   const [convertTx, setConvertTx] = useState<AccountTx | null>(null);
 
-  const all = useMemo<AccountTx[]>(
-    () => [...(data?.paid || []), ...(data?.open || [])],
-    [data],
-  );
+  const all = useMemo<AccountTx[]>(() => data?.all || [], [data]);
+  const amountForMode = (t: AccountTx) =>
+    mode === 'competencia' ? t.valor || 0 : (t.valor_pago ?? t.valor) || 0;
+  const dateForMode = (t: AccountTx) =>
+    mode === 'competencia' ? t.data_vencimento : t.data_pagamento || t.data_vencimento;
 
   const categories = useMemo(() => {
     const map = new Map<string, string>();
@@ -88,29 +89,27 @@ export function AccountMovementsTable({ accountId, year, month, mode = 'caixa' }
     rows = [...rows].sort((a, b) => {
       let cmp = 0;
       if (sortKey === 'date') {
-        cmp = (a.data_pagamento || a.data_vencimento).localeCompare(
-          b.data_pagamento || b.data_vencimento,
-        );
+        cmp = dateForMode(a).localeCompare(dateForMode(b));
       } else if (sortKey === 'value') {
-        cmp = (a.valor_pago ?? a.valor) - (b.valor_pago ?? b.valor);
+        cmp = amountForMode(a) - amountForMode(b);
       } else {
         cmp = (a.category_name || '').localeCompare(b.category_name || '');
       }
       return sortDir === 'asc' ? cmp : -cmp;
     });
     return rows;
-  }, [all, type, status, category, search, sortKey, sortDir]);
+  }, [all, type, status, category, search, sortKey, sortDir, mode]);
 
   const totals = useMemo(() => {
     let inSum = 0,
       outSum = 0;
     filtered.forEach((t) => {
-      const v = (t.valor_pago ?? t.valor) || 0;
+      const v = amountForMode(t);
       if (t.tipo_movimento === 'ENTRADA') inSum += v;
       else outSum += v;
     });
     return { in: inSum, out: outSum, net: inSum - outSum, count: filtered.length };
-  }, [filtered]);
+  }, [filtered, mode]);
 
   const toggleSort = (key: SortKey) => {
     if (sortKey === key) setSortDir((d) => (d === 'asc' ? 'desc' : 'asc'));
@@ -130,7 +129,7 @@ export function AccountMovementsTable({ accountId, year, month, mode = 'caixa' }
       'Valor',
     ];
     const rows = filtered.map((t) => [
-      fmtDate(t.data_pagamento || t.data_vencimento),
+      fmtDate(dateForMode(t)),
       (t.descricao || '').replace(/"/g, '""'),
       t.category_name || 'Sem categoria',
       t.tipo_movimento,
@@ -156,8 +155,8 @@ export function AccountMovementsTable({ accountId, year, month, mode = 'caixa' }
           {mode === 'caixa' ? 'Regime de caixa' : 'Regime de competência'}:
         </span>{' '}
         {mode === 'caixa'
-          ? 'mostra somente lançamentos pagos pela data de pagamento, alinhado aos cards de saldo acima.'
-          : 'mostra lançamentos pela competência do mês, mesmo que tenham sido pagos em outro período.'}
+          ? 'mostra somente lançamentos pagos pela data de pagamento, usado para conciliação bancária.'
+          : 'mostra os mesmos lançamentos da página Transações filtrados por conta, mês e ano de competência.'}
       </div>
 
       {/* Filters bar */}
@@ -253,7 +252,7 @@ export function AccountMovementsTable({ accountId, year, month, mode = 'caixa' }
                     className="flex items-center gap-1 hover:text-foreground"
                     onClick={() => toggleSort('date')}
                   >
-                    {mode === 'caixa' ? 'Pagamento' : 'Data'} <ArrowUpDown className="w-3 h-3" />
+                    {mode === 'caixa' ? 'Pagamento' : 'Vencimento'} <ArrowUpDown className="w-3 h-3" />
                   </button>
                 </TableHead>
                 <TableHead>Descrição</TableHead>
@@ -280,11 +279,11 @@ export function AccountMovementsTable({ accountId, year, month, mode = 'caixa' }
             <TableBody>
               {filtered.map((t) => {
                 const isIn = t.tipo_movimento === 'ENTRADA';
-                const v = t.valor_pago ?? t.valor;
+                const v = amountForMode(t);
                 return (
                   <TableRow key={t.id} className="text-xs">
                     <TableCell className="text-muted-foreground">
-                      {fmtDate(t.data_pagamento || t.data_vencimento)}
+                      {fmtDate(dateForMode(t))}
                     </TableCell>
                     <TableCell className="font-medium">
                       <div className="flex items-center gap-1.5">

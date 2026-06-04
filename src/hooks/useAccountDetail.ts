@@ -52,7 +52,7 @@ export function useAccountDetail(
   accountId: string | null,
   year: number,
   month: number,
-  mode: DetailPeriodMode = 'caixa',
+  mode: DetailPeriodMode = 'competencia',
 ) {
   return useQuery({
     queryKey: ['account-detail-v2', accountId, year, month, mode],
@@ -147,7 +147,7 @@ export function useAccountDetail(
         const id = t.transaction_category_id || 'sem-categoria';
         const name = t.category_name || 'Sem categoria';
         const color = t.category_color || '#94a3b8';
-        const v = (t.valor_pago ?? t.valor) || 0;
+        const v = mode === 'competencia' ? t.valor || 0 : (t.valor_pago ?? t.valor) || 0;
         const cur = compMap.get(id);
         const signed = t.tipo_movimento === 'ENTRADA' ? v : -v;
         if (cur) cur.total += signed;

@@ -52,12 +52,14 @@ function KPI({
   icon: Icon,
   tone = 'neutral',
   subtitle,
+  format = 'currency',
 }: {
   label: string;
   value: number;
   icon?: any;
   tone?: 'neutral' | 'in' | 'out' | 'transfer';
   subtitle?: string;
+  format?: 'currency' | 'number';
 }) {
   const color =
     tone === 'in'
@@ -73,7 +75,9 @@ function KPI({
         {Icon && <Icon className="w-3 h-3" />}
         {label}
       </div>
-      <p className={cn('text-base font-bold mt-1', color)}>{fmt(value)}</p>
+      <p className={cn('text-base font-bold mt-1', color)}>
+        {format === 'number' ? value : fmt(value)}
+      </p>
       {subtitle && <p className="text-[10px] text-muted-foreground mt-0.5">{subtitle}</p>}
     </div>
   );
@@ -90,7 +94,7 @@ export function AccountDetailPage({ accountId, onBack, onSelectAccount }: Props)
   const account = accounts?.find((a) => a.id === accountId);
   const { data: snapshots } = useAccountsSnapshot(year, month);
   const snapshot = snapshots?.[accountId];
-  const { data, isLoading } = useAccountDetail(accountId, year, month, 'caixa');
+  const { data, isLoading } = useAccountDetail(accountId, year, month, 'competencia');
 
   if (!account) {
     return (
@@ -106,13 +110,24 @@ export function AccountDetailPage({ accountId, onBack, onSelectAccount }: Props)
   const saldoFim = snapshot?.saldo_fim_mes ?? Number(account.current_balance) ?? 0;
   const saldoIni = snapshot?.saldo_inicio_mes ?? saldoFim;
   const variacao = snapshot?.variacao ?? 0;
-  const entradas = snapshot?.entradas_mes ?? 0;
-  const saidas = snapshot?.saidas_mes ?? 0;
+  const entradasCaixa = snapshot?.entradas_mes ?? 0;
+  const saidasCaixa = snapshot?.saidas_mes ?? 0;
   const trIn = snapshot?.transferencias_in ?? 0;
   const trOut = snapshot?.transferencias_out ?? 0;
+  const competencia = (data?.all || []).reduce(
+    (acc, t) => {
+      const value = Number(t.valor) || 0;
+      acc.itens += 1;
+      if (t.tipo_movimento === 'ENTRADA') acc.entradas += value;
+      else acc.saidas += value;
+      return acc;
+    },
+    { entradas: 0, saidas: 0, itens: 0 },
+  );
+  const resultadoCompetencia = competencia.entradas - competencia.saidas;
 
   // Validação contábil: saldoIni + entradas + trIn − saídas − trOut === saldoFim
-  const expectedFim = saldoIni + entradas + trIn - saidas - trOut;
+  const expectedFim = saldoIni + entradasCaixa + trIn - saidasCaixa - trOut;
   const diff = expectedFim - saldoFim;
   const consistent = Math.abs(diff) < 0.01;
 
@@ -205,21 +220,20 @@ export function AccountDetailPage({ accountId, onBack, onSelectAccount }: Props)
       </div>
 
       {/* KPIs */}
-      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2">
-        <KPI label="Saldo inicial" value={saldoIni} icon={Wallet} />
-        <KPI label="Recebimentos" value={entradas} tone="in" icon={ArrowDownLeft} />
-        <KPI label="Transf. recebidas" value={trIn} tone="transfer" icon={ArrowLeftRight} />
-        <KPI label="Despesas" value={saidas} tone="out" icon={ArrowUpRight} />
-        <KPI label="Transf. enviadas" value={trOut} tone="transfer" icon={ArrowLeftRight} />
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-2">
+        <KPI label="Itens da competência" value={competencia.itens} icon={Wallet} format="number" />
+        <KPI label="Receitas da competência" value={competencia.entradas} tone="in" icon={ArrowDownLeft} />
+        <KPI label="Despesas da competência" value={competencia.saidas} tone="out" icon={ArrowUpRight} />
         <KPI
-          label="Saldo final"
-          value={saldoFim}
+          label="Resultado da competência"
+          value={resultadoCompetencia}
           icon={Wallet}
-          subtitle={`${variacao >= 0 ? '+' : ''}${fmt(variacao)} variação`}
+          tone={resultadoCompetencia >= 0 ? 'in' : 'out'}
+          subtitle="Mesmo critério da página Transações"
         />
       </div>
 
-      {/* Validação contábil */}
+      {/* Saldo bancário / caixa */}
       <div
         className={cn(
           'rounded-lg border p-2.5 text-xs flex items-center gap-2 flex-wrap',
@@ -233,9 +247,9 @@ export function AccountDetailPage({ accountId, onBack, onSelectAccount }: Props)
         ) : (
           <AlertTriangle className="w-4 h-4 flex-shrink-0" />
         )}
-        <span className="font-medium">Conferência:</span>
+        <span className="font-medium">Saldo bancário/caixa:</span>
         <span className="font-mono">
-          {fmt(saldoIni)} + {fmt(entradas)} + {fmt(trIn)} − {fmt(saidas)} − {fmt(trOut)} ={' '}
+          {fmt(saldoIni)} + {fmt(entradasCaixa)} + {fmt(trIn)} − {fmt(saidasCaixa)} − {fmt(trOut)} ={' '}
           <strong>{fmt(expectedFim)}</strong>
         </span>
         <span>·</span>
@@ -247,6 +261,9 @@ export function AccountDetailPage({ accountId, onBack, onSelectAccount }: Props)
             Diferença: <strong>{fmt(diff)}</strong>
           </span>
         )}
+        <span className="basis-full text-muted-foreground">
+          Este fechamento usa pagamentos e transferências reais; os cards acima usam competência para bater com Transações.
+        </span>
       </div>
 
       {/* Tabs */}
@@ -278,7 +295,7 @@ export function AccountDetailPage({ accountId, onBack, onSelectAccount }: Props)
 
         {/* MOVIMENTOS */}
         <TabsContent value="movimentos" className="mt-3">
-          <AccountMovementsTable accountId={accountId} year={year} month={month} mode="caixa" />
+          <AccountMovementsTable accountId={accountId} year={year} month={month} mode="competencia" />
         </TabsContent>
 
         {/* TRANSFERÊNCIAS */}
