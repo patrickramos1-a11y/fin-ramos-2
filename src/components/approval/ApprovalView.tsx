@@ -11,6 +11,7 @@ import { Textarea } from '@/components/ui/textarea';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import {
   CheckCircle, XCircle, Clock, Search, AlertTriangle,
   ArrowDownCircle, ArrowUpCircle, Loader2, Eye, Filter,
@@ -97,6 +98,58 @@ interface PendingTransaction {
 type SortField = 'data_vencimento' | 'valor' | 'created_at' | 'descricao' | 'tipo_movimento';
 type SortDir = 'asc' | 'desc';
 
+type ApprovalColumnKey =
+  | 'tipo'
+  | 'descricao'
+  | 'cliente'
+  | 'entidade'
+  | 'categoria'
+  | 'origem'
+  | 'criado_em'
+  | 'vencimento'
+  | 'valor'
+  | 'status';
+
+const APPROVAL_COLUMNS: Array<{ key: ApprovalColumnKey; label: string }> = [
+  { key: 'tipo', label: 'Tipo' },
+  { key: 'descricao', label: 'Descrição' },
+  { key: 'cliente', label: 'Cliente (empresa)' },
+  { key: 'entidade', label: 'Vinculado a' },
+  { key: 'categoria', label: 'Categoria' },
+  { key: 'origem', label: 'Origem' },
+  { key: 'criado_em', label: 'Criado em' },
+  { key: 'vencimento', label: 'Vencimento' },
+  { key: 'valor', label: 'Valor' },
+  { key: 'status', label: 'Status' },
+];
+
+const DEFAULT_APPROVAL_COLUMNS: Record<ApprovalColumnKey, boolean> = {
+  tipo: true,
+  descricao: true,
+  cliente: true,
+  entidade: true,
+  categoria: true,
+  origem: true,
+  criado_em: true,
+  vencimento: true,
+  valor: true,
+  status: true,
+};
+
+const APPROVAL_COLUMNS_STORAGE_KEY = 'approval-table-visible-columns-v1';
+
+function getStoredApprovalColumns(): Record<ApprovalColumnKey, boolean> {
+  if (typeof window === 'undefined') return DEFAULT_APPROVAL_COLUMNS;
+  try {
+    const raw = window.localStorage.getItem(APPROVAL_COLUMNS_STORAGE_KEY);
+    if (!raw) return DEFAULT_APPROVAL_COLUMNS;
+    const parsed = JSON.parse(raw) as Partial<Record<ApprovalColumnKey, boolean>>;
+    return { ...DEFAULT_APPROVAL_COLUMNS, ...parsed };
+  } catch {
+    return DEFAULT_APPROVAL_COLUMNS;
+  }
+}
+
 export function ApprovalView() {
   const { user, isAdmin } = useAuth();
   const queryClient = useQueryClient();
@@ -129,6 +182,7 @@ export function ApprovalView() {
   const [bulkDataVencimento, setBulkDataVencimento] = useState<string>('');
   const [bulkStatus, setBulkStatus] = useState<string>('');
   const [bulkNotes, setBulkNotes] = useState<string>('');
+  const [visibleColumns, setVisibleColumns] = useState<Record<ApprovalColumnKey, boolean>>(getStoredApprovalColumns);
 
   // Lookup data for bulk edit — fetch ALL records (active + inactive) so legacy refs are preserved
   const { data: categoriesList } = useQuery({
@@ -616,6 +670,38 @@ export function ApprovalView() {
   };
 
   const formatDate = (d: string) => new Date(d).toLocaleDateString('pt-BR');
+  const formatDateTime = (d: string) => new Date(d).toLocaleString('pt-BR', {
+    day: '2-digit',
+    month: '2-digit',
+    year: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+  });
+
+  const visibleColumnCount = APPROVAL_COLUMNS.filter(c => visibleColumns[c.key]).length;
+  const tableColSpan = (isAdmin && filterStatus === 'pendente' ? 1 : 0) + visibleColumnCount + (isAdmin ? 1 : 0);
+
+  const toggleColumn = (key: ApprovalColumnKey) => {
+    setVisibleColumns(prev => {
+      const enabledCount = APPROVAL_COLUMNS.filter(c => prev[c.key]).length;
+      if (prev[key] && enabledCount <= 1) {
+        toast.info('Mantenha pelo menos uma coluna visível.');
+        return prev;
+      }
+      return { ...prev, [key]: !prev[key] };
+    });
+  };
+
+  const saveColumnModel = () => {
+    window.localStorage.setItem(APPROVAL_COLUMNS_STORAGE_KEY, JSON.stringify(visibleColumns));
+    toast.success('Modelo de colunas salvo.');
+  };
+
+  const resetColumnModel = () => {
+    setVisibleColumns(DEFAULT_APPROVAL_COLUMNS);
+    window.localStorage.removeItem(APPROVAL_COLUMNS_STORAGE_KEY);
+    toast.success('Modelo padrão restaurado.');
+  };
 
   const openEdit = async (id: string) => {
     // Fetch full row to pass to edit modal
@@ -755,6 +841,46 @@ export function ApprovalView() {
           <Layers className="w-4 h-4" />
           Agrupar Despesas Fixas
         </Button>
+        <Popover>
+          <PopoverTrigger asChild>
+            <Button variant="outline" className="gap-2">
+              <Filter className="w-4 h-4" />
+              Colunas
+            </Button>
+          </PopoverTrigger>
+          <PopoverContent align="end" className="w-80">
+            <div className="space-y-3">
+              <div>
+                <p className="text-sm font-semibold">Configurar colunas</p>
+                <p className="text-xs text-muted-foreground">
+                  Escolha o que aparece na planilha e salve como seu modelo.
+                </p>
+              </div>
+              <div className="grid grid-cols-1 gap-2">
+                {APPROVAL_COLUMNS.map(column => (
+                  <label
+                    key={column.key}
+                    className="flex cursor-pointer items-center gap-2 rounded-md border px-3 py-2 text-sm hover:bg-muted/50"
+                  >
+                    <Checkbox
+                      checked={visibleColumns[column.key]}
+                      onCheckedChange={() => toggleColumn(column.key)}
+                    />
+                    <span>{column.label}</span>
+                  </label>
+                ))}
+              </div>
+              <div className="flex gap-2 pt-1">
+                <Button size="sm" className="flex-1" onClick={saveColumnModel}>
+                  Salvar modelo
+                </Button>
+                <Button size="sm" variant="outline" onClick={resetColumnModel}>
+                  Restaurar
+                </Button>
+              </div>
+            </div>
+          </PopoverContent>
+        </Popover>
       </div>
 
       {/* Grouped Fixed Expenses panel */}
@@ -981,30 +1107,43 @@ export function ApprovalView() {
                         <Checkbox checked={allPendingSelected} onCheckedChange={toggleSelectAll} />
                       </th>
                     )}
-                    <th className="text-left p-3 text-xs font-medium cursor-pointer select-none" onClick={() => handleSort('tipo_movimento')}>
-                      <span className="flex items-center">Tipo <SortIcon field="tipo_movimento" /></span>
-                    </th>
-                    <th className="text-left p-3 text-xs font-medium cursor-pointer select-none" onClick={() => handleSort('descricao')}>
-                      <span className="flex items-center">Descrição <SortIcon field="descricao" /></span>
-                    </th>
-                    <th className="text-left p-3 text-xs font-medium">Cliente (empresa)</th>
-                    <th className="text-left p-3 text-xs font-medium">Vinculado a</th>
-                    <th className="text-left p-3 text-xs font-medium">Categoria</th>
-                    <th className="text-left p-3 text-xs font-medium">Origem</th>
-                    <th className="text-left p-3 text-xs font-medium cursor-pointer select-none" onClick={() => handleSort('data_vencimento')}>
-                      <span className="flex items-center">Vencimento <SortIcon field="data_vencimento" /></span>
-                    </th>
-                    <th className="text-right p-3 text-xs font-medium cursor-pointer select-none" onClick={() => handleSort('valor')}>
-                      <span className="flex items-center justify-end">Valor <SortIcon field="valor" /></span>
-                    </th>
-                    <th className="text-center p-3 text-xs font-medium">Status</th>
+                    {visibleColumns.tipo && (
+                      <th className="text-left p-3 text-xs font-medium cursor-pointer select-none" onClick={() => handleSort('tipo_movimento')}>
+                        <span className="flex items-center">Tipo <SortIcon field="tipo_movimento" /></span>
+                      </th>
+                    )}
+                    {visibleColumns.descricao && (
+                      <th className="text-left p-3 text-xs font-medium cursor-pointer select-none" onClick={() => handleSort('descricao')}>
+                        <span className="flex items-center">Descrição <SortIcon field="descricao" /></span>
+                      </th>
+                    )}
+                    {visibleColumns.cliente && <th className="text-left p-3 text-xs font-medium">Cliente (empresa)</th>}
+                    {visibleColumns.entidade && <th className="text-left p-3 text-xs font-medium">Vinculado a</th>}
+                    {visibleColumns.categoria && <th className="text-left p-3 text-xs font-medium">Categoria</th>}
+                    {visibleColumns.origem && <th className="text-left p-3 text-xs font-medium">Origem</th>}
+                    {visibleColumns.criado_em && (
+                      <th className="text-left p-3 text-xs font-medium cursor-pointer select-none" onClick={() => handleSort('created_at')}>
+                        <span className="flex items-center">Criado em <SortIcon field="created_at" /></span>
+                      </th>
+                    )}
+                    {visibleColumns.vencimento && (
+                      <th className="text-left p-3 text-xs font-medium cursor-pointer select-none" onClick={() => handleSort('data_vencimento')}>
+                        <span className="flex items-center">Vencimento <SortIcon field="data_vencimento" /></span>
+                      </th>
+                    )}
+                    {visibleColumns.valor && (
+                      <th className="text-right p-3 text-xs font-medium cursor-pointer select-none" onClick={() => handleSort('valor')}>
+                        <span className="flex items-center justify-end">Valor <SortIcon field="valor" /></span>
+                      </th>
+                    )}
+                    {visibleColumns.status && <th className="text-center p-3 text-xs font-medium">Status</th>}
                     {isAdmin && <th className="text-center p-3 text-xs font-medium">Ações</th>}
                   </tr>
                 </thead>
                 <tbody className="divide-y">
                   {filtered.length === 0 ? (
                     <tr>
-                      <td colSpan={isAdmin ? 12 : 11} className="text-center py-8 text-muted-foreground text-sm">
+                      <td colSpan={tableColSpan} className="text-center py-8 text-muted-foreground text-sm">
                         Nenhum lançamento encontrado
                       </td>
                     </tr>
@@ -1021,49 +1160,66 @@ export function ApprovalView() {
                             <Checkbox checked={selectedIds.has(t.id)} onCheckedChange={() => toggleSelect(t.id)} />
                           </td>
                         )}
-                        <td className="p-3">
-                          {t.tipo_movimento === 'ENTRADA'
-                            ? <ArrowDownCircle className="w-5 h-5 text-income" />
-                            : <ArrowUpCircle className="w-5 h-5 text-expense" />
-                          }
-                        </td>
-                        <td className="p-3">
-                          <p className="text-sm font-medium truncate max-w-[200px]">
-                            {t.descricao || t.fixed_expense_name || '-'}
-                          </p>
-                          <p className="text-xs text-muted-foreground">{t.competencia_mes.toString().padStart(2, '0')}/{t.competencia_ano}</p>
-                        </td>
-                        <td className="p-3 text-sm">
-                          {t.client_name || (
-                            missingClient
-                              ? <span className="text-amber-600 text-xs italic">⚠ não preenchido</span>
-                              : '-'
-                          )}
-                        </td>
-                        <td className="p-3 text-xs">
-                          {t.entity_name ? (
-                            <span className="font-medium">{t.entity_name}</span>
-                          ) : (
-                            <span className="text-muted-foreground">-</span>
-                          )}
-                        </td>
-                        <td className="p-3 text-xs">
-                          {t.category_name || (
-                            missingCategory
-                              ? <span className="text-amber-600 italic">⚠ não preenchido</span>
-                              : '-'
-                          )}
-                        </td>
-                        <td className="p-3">
-                          <Badge variant="outline" className="text-xs">{getOrigemLabel(t.origem)}</Badge>
-                        </td>
-                        <td className="p-3 text-sm">{formatDate(t.data_vencimento)}</td>
-                        <td className="p-3 text-right">
-                          <span className={cn("font-semibold text-sm", t.tipo_movimento === 'ENTRADA' ? 'text-income' : 'text-expense')}>
-                            {formatCurrency(Number(t.valor))}
-                          </span>
-                        </td>
-                        <td className="p-3 text-center">{getApprovalBadge(t.approval_status)}</td>
+                        {visibleColumns.tipo && (
+                          <td className="p-3">
+                            {t.tipo_movimento === 'ENTRADA'
+                              ? <ArrowDownCircle className="w-5 h-5 text-income" />
+                              : <ArrowUpCircle className="w-5 h-5 text-expense" />
+                            }
+                          </td>
+                        )}
+                        {visibleColumns.descricao && (
+                          <td className="p-3">
+                            <p className="text-sm font-medium truncate max-w-[200px]">
+                              {t.descricao || t.fixed_expense_name || '-'}
+                            </p>
+                            <p className="text-xs text-muted-foreground">{t.competencia_mes.toString().padStart(2, '0')}/{t.competencia_ano}</p>
+                          </td>
+                        )}
+                        {visibleColumns.cliente && (
+                          <td className="p-3 text-sm">
+                            {t.client_name || (
+                              missingClient
+                                ? <span className="text-amber-600 text-xs italic">⚠ não preenchido</span>
+                                : '-'
+                            )}
+                          </td>
+                        )}
+                        {visibleColumns.entidade && (
+                          <td className="p-3 text-xs">
+                            {t.entity_name ? (
+                              <span className="font-medium">{t.entity_name}</span>
+                            ) : (
+                              <span className="text-muted-foreground">-</span>
+                            )}
+                          </td>
+                        )}
+                        {visibleColumns.categoria && (
+                          <td className="p-3 text-xs">
+                            {t.category_name || (
+                              missingCategory
+                                ? <span className="text-amber-600 italic">⚠ não preenchido</span>
+                                : '-'
+                            )}
+                          </td>
+                        )}
+                        {visibleColumns.origem && (
+                          <td className="p-3">
+                            <Badge variant="outline" className="text-xs">{getOrigemLabel(t.origem)}</Badge>
+                          </td>
+                        )}
+                        {visibleColumns.criado_em && (
+                          <td className="p-3 text-xs text-muted-foreground whitespace-nowrap">{formatDateTime(t.created_at)}</td>
+                        )}
+                        {visibleColumns.vencimento && <td className="p-3 text-sm">{formatDate(t.data_vencimento)}</td>}
+                        {visibleColumns.valor && (
+                          <td className="p-3 text-right">
+                            <span className={cn("font-semibold text-sm", t.tipo_movimento === 'ENTRADA' ? 'text-income' : 'text-expense')}>
+                              {formatCurrency(Number(t.valor))}
+                            </span>
+                          </td>
+                        )}
+                        {visibleColumns.status && <td className="p-3 text-center">{getApprovalBadge(t.approval_status)}</td>}
                         {isAdmin && (
                           <td className="p-3">
                             <div className="flex items-center justify-center gap-1">
