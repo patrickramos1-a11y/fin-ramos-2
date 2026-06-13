@@ -6,7 +6,7 @@ import {
   LayoutDashboard, ArrowDownUp, Wallet, Users, Settings, FileSpreadsheet,
   BarChart3, ChevronLeft, ChevronRight, LogOut, Menu, RefreshCw,
   AlertCircle, ClipboardList, ChevronDown, ArrowDownCircle, ArrowUpCircle,
-  FileText, Building2, ShieldCheck, PlusCircle
+  FileText, Building2, ShieldCheck, PlusCircle, CreditCard
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { Sheet, SheetContent, SheetTrigger } from '@/components/ui/sheet';
@@ -71,6 +71,7 @@ const menuSections: MenuSection[] = [
     items: [
       { id: 'accounts', label: 'Contas', icon: Wallet },
       { id: 'open-payments', label: 'Em Aberto', icon: AlertCircle, badge: 'critical' },
+      { id: 'credit-cards', label: 'Cartão', icon: CreditCard },
       { id: 'approval', label: 'Aprovações', icon: ShieldCheck, badge: 'approval' },
       { id: 'recurring-contracts', label: 'Contratos', icon: RefreshCw },
       { id: 'reclassification', label: 'Reclassificação', icon: FileText },

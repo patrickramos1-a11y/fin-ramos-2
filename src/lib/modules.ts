@@ -7,6 +7,7 @@ export type ModuleKey =
   | 'transactions'
   | 'accounts'
   | 'open-payments'
+  | 'credit-cards'
   | 'approval'
   | 'recurring-contracts'
   | 'reclassification'
@@ -33,6 +34,7 @@ export const MODULES: ModuleDef[] = [
 
   { key: 'accounts', label: 'Contas', section: 'Gestão', defaultFinanceiro: true },
   { key: 'open-payments', label: 'Em Aberto', section: 'Gestão', defaultFinanceiro: true },
+  { key: 'credit-cards', label: 'Cartão', section: 'Gestão', defaultFinanceiro: true, description: 'Importação e conferência de faturas de cartão' },
   { key: 'approval', label: 'Aprovações', section: 'Gestão', defaultFinanceiro: true },
   { key: 'recurring-contracts', label: 'Contratos Recorrentes', section: 'Gestão', defaultFinanceiro: true },
   { key: 'reclassification', label: 'Reclassificação', section: 'Gestão', defaultFinanceiro: false },

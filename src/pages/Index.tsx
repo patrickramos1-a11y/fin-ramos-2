@@ -23,6 +23,7 @@ import { OpenPaymentsView } from '@/components/open-payments/OpenPaymentsView';
 import { BacklogView } from '@/components/backlog/BacklogView';
 import { ReclassificationView } from '@/components/reclassification/ReclassificationView';
 import { ApprovalView } from '@/components/approval/ApprovalView';
+import { CreditCardInvoicesView } from '@/components/cards/CreditCardInvoicesView';
 import { cn } from '@/lib/utils';
 import { Loader2 } from 'lucide-react';
 import { PageTransition } from '@/components/feedback/PageTransition';
@@ -40,6 +41,7 @@ const tabConfig: Record<string, { title: string; subtitle?: string }> = {
   'despesas-variaveis': { title: 'Despesas Variáveis', subtitle: 'Gastos pontuais e variáveis' },
   lancamento: { title: 'Lançamento', subtitle: 'Criar e revisar últimos lançamentos' },
   'open-payments': { title: 'Em Aberto', subtitle: 'Controle de inadimplência' },
+  'credit-cards': { title: 'Cartão', subtitle: 'Importação e conferência de faturas' },
   'recurring-contracts': { title: 'Contratos', subtitle: 'Gestão por salário mínimo' },
   reports: { title: 'Relatórios', subtitle: 'Análises e DRE' },
   clients: { title: 'Clientes', subtitle: 'Gerencie sua carteira' },
@@ -138,6 +140,7 @@ function GatedContent({ activeTab, setDetailAccountId }: { activeTab: string; se
     case 'despesas-variaveis': return <DespesasVariaveisPage />;
     case 'lancamento': return <LancamentoPage />;
     case 'open-payments': return <OpenPaymentsView />;
+    case 'credit-cards': return <CreditCardInvoicesView />;
     case 'recurring-contracts': return <RecurringContractsView />;
     case 'reports': return <ReportsView />;
     case 'clients': return <ClientsView />;
