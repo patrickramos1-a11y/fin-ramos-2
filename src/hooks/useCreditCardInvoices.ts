@@ -91,12 +91,14 @@ export function useSaveCreditCardInvoice() {
       fileName,
       month,
       year,
+      invoiceLabel,
     }: {
       parsed: ParsedCreditCardStatement;
       selectedCards: CreditCardStatementCard[];
       fileName: string;
       month: number;
       year: number;
+      invoiceLabel?: string;
     }) => {
       const totalAmount = selectedCards.reduce((sum, card) => sum + card.total, 0);
       const totalTransactions = selectedCards.reduce((sum, card) => sum + card.transactions.length, 0);
@@ -108,7 +110,7 @@ export function useSaveCreditCardInvoice() {
           competence_year: year,
           file_name: fileName,
           holder: parsed.meta.holder || null,
-          invoice_label: parsed.meta.invoice || null,
+          invoice_label: invoiceLabel || parsed.meta.invoice || null,
           source_meta: parsed.meta,
           selected_cards: selectedCards.map(card => ({
             name: card.name,
@@ -165,6 +167,31 @@ export function useSaveCreditCardInvoice() {
   });
 }
 
+export function useUpdateCreditCardInvoice() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: async ({ id, updates }: { id: string; updates: Partial<Pick<CreditCardInvoice, 'invoice_label' | 'status'>> }) => {
+      const { data, error } = await (supabase as any)
+        .from('credit_card_invoices')
+        .update(updates)
+        .eq('id', id)
+        .select('*')
+        .single();
+      if (error) throw error;
+      return data as CreditCardInvoice;
+    },
+    onSuccess: async (invoice) => {
+      await queryClient.invalidateQueries({ queryKey: ['credit-card-invoices'] });
+      await queryClient.invalidateQueries({ queryKey: ['credit-card-invoice-items', invoice.id] });
+      toast.success('Fatura atualizada.');
+    },
+    onError: (error: any) => {
+      toast.error('Erro ao atualizar fatura: ' + (error?.message || ''));
+    },
+  });
+}
+
 export function useBulkUpdateCreditCardItems() {
   const queryClient = useQueryClient();
 
@@ -189,4 +216,3 @@ export function useBulkUpdateCreditCardItems() {
     },
   });
 }
-

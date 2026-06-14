@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Upload, CreditCard, FileSpreadsheet, CheckCircle2, Trash2, Search, Tags } from 'lucide-react';
+import * as XLSX from 'xlsx';
+import { Upload, CreditCard, FileSpreadsheet, CheckCircle2, Search, Tags, Download, Pencil, Save } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
@@ -17,6 +18,9 @@ import {
   useCreditCardInvoiceItems,
   useCreditCardInvoices,
   useSaveCreditCardInvoice,
+  useUpdateCreditCardInvoice,
+  type CreditCardInvoice,
+  type CreditCardInvoiceItem,
 } from '@/hooks/useCreditCardInvoices';
 import { useTransactionCategories } from '@/hooks/useFinancialConfig';
 import { cn } from '@/lib/utils';
@@ -32,10 +36,14 @@ export function CreditCardInvoicesView() {
   const now = new Date();
   const [parsed, setParsed] = useState<ParsedCreditCardStatement | null>(null);
   const [fileName, setFileName] = useState('');
+  const [invoiceName, setInvoiceName] = useState('');
   const [selectedCards, setSelectedCards] = useState<Set<string>>(new Set());
   const [month, setMonth] = useState(now.getMonth() + 1);
   const [year, setYear] = useState(now.getFullYear());
   const [selectedInvoiceId, setSelectedInvoiceId] = useState<string | null>(null);
+  const [selectedInvoiceIds, setSelectedInvoiceIds] = useState<Set<string>>(new Set());
+  const [editingInvoiceId, setEditingInvoiceId] = useState<string | null>(null);
+  const [editingInvoiceName, setEditingInvoiceName] = useState('');
   const [search, setSearch] = useState('');
   const [selectedItems, setSelectedItems] = useState<Set<string>>(new Set());
   const [bulkCategoryId, setBulkCategoryId] = useState('');
@@ -50,6 +58,7 @@ export function CreditCardInvoicesView() {
   }, [invoices, selectedInvoiceId]);
   const { data: categories = [] } = useTransactionCategories();
   const saveInvoice = useSaveCreditCardInvoice();
+  const updateInvoice = useUpdateCreditCardInvoice();
   const bulkUpdate = useBulkUpdateCreditCardItems();
 
   const selectedParsedCards = useMemo<CreditCardStatementCard[]>(
@@ -82,6 +91,7 @@ export function CreditCardInvoicesView() {
       }
       setParsed(result);
       setFileName(file.name);
+      setInvoiceName(defaultInvoiceName(result, file.name, month, year));
       setSelectedCards(new Set(result.cards.map(card => card.id)));
       toast.success(`${result.cards.length} cartão(ões) detectado(s).`);
     } catch (error) {
@@ -98,10 +108,12 @@ export function CreditCardInvoicesView() {
       fileName,
       month,
       year,
+      invoiceLabel: invoiceName.trim() || undefined,
     });
     setSelectedInvoiceId(invoice.id);
     setParsed(null);
     setFileName('');
+    setInvoiceName('');
     setSelectedCards(new Set());
   };
 
@@ -121,6 +133,81 @@ export function CreditCardInvoicesView() {
       else next.add(id);
       return next;
     });
+  };
+
+  const toggleSavedInvoice = (id: string) => {
+    setSelectedInvoiceIds(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+
+  const beginEditInvoice = (invoice: CreditCardInvoice) => {
+    setEditingInvoiceId(invoice.id);
+    setEditingInvoiceName(displayInvoiceName(invoice));
+  };
+
+  const saveInvoiceName = () => {
+    if (!editingInvoiceId) return;
+    updateInvoice.mutate({
+      id: editingInvoiceId,
+      updates: { invoice_label: editingInvoiceName.trim() || null },
+    }, {
+      onSuccess: () => {
+        setEditingInvoiceId(null);
+        setEditingInvoiceName('');
+      },
+    });
+  };
+
+  const exportParsedCards = () => {
+    if (!parsed || selectedParsedCards.length === 0) return;
+    exportRowsToExcel(
+      selectedParsedCards.flatMap(card => card.transactions.map(tx => ({
+        'Competência': `${months[month - 1]}/${year}`,
+        'Fatura': invoiceName.trim() || defaultInvoiceName(parsed, fileName, month, year),
+        'Arquivo': fileName,
+        'Cartão': card.name,
+        'Final': card.finalDigits,
+        'Tipo do cartão': card.type,
+        'Data': tx.date,
+        'Descrição': tx.description,
+        'Parcela': tx.installment || '',
+        'Escopo': tx.scope,
+        'País': tx.country || '',
+        'Valor USD': tx.usdValue ?? '',
+        'Câmbio': tx.fxRate ?? '',
+        'Sugestão': tx.categoryHint || '',
+        'Valor': tx.value,
+      }))),
+      `fatura-cartao-${year}-${String(month).padStart(2, '0')}`,
+    );
+  };
+
+  const exportVisibleItems = () => {
+    if (!activeInvoice || filteredItems.length === 0) return;
+    exportSavedInvoiceRows(activeInvoice, filteredItems);
+  };
+
+  const exportSelectedSavedInvoices = () => {
+    const ids = selectedInvoiceIds.size > 0 ? selectedInvoiceIds : new Set(activeInvoice ? [activeInvoice.id] : []);
+    const selected = invoices.filter(invoice => ids.has(invoice.id));
+    if (selected.length === 0) return;
+    exportRowsToExcel(
+      selected.map(invoice => ({
+        'Fatura': displayInvoiceName(invoice),
+        'Competência': `${months[invoice.competence_month - 1]}/${invoice.competence_year}`,
+        'Arquivo': invoice.file_name || '',
+        'Status': invoice.status,
+        'Cartões': summarizeCards(invoice),
+        'Lançamentos': invoice.total_transactions,
+        'Total': Number(invoice.total_amount) || 0,
+        'Criada em': new Date(invoice.created_at).toLocaleString('pt-BR'),
+      })),
+      'faturas-cartao-salvas',
+    );
   };
 
   const applyBulkCategory = () => {
@@ -182,6 +269,15 @@ export function CreditCardInvoicesView() {
               </Select>
               <Input type="number" value={year} onChange={(event) => setYear(Number(event.target.value))} />
             </div>
+            <div className="mt-3">
+              <p className="mb-2 text-sm font-semibold">Nome da fatura</p>
+              <Input
+                value={invoiceName}
+                onChange={(event) => setInvoiceName(event.target.value)}
+                placeholder="Ex: Inter Abril 2026, XP cartão Patrick..."
+              />
+              <p className="mt-1 text-xs text-muted-foreground">Você pode salvar mais de uma fatura no mesmo mês com nomes diferentes.</p>
+            </div>
             <div className="mt-4 rounded-xl bg-muted/60 p-3 text-sm">
               <p className="text-muted-foreground">Arquivo</p>
               <p className="truncate font-medium">{fileName || 'Nenhum arquivo selecionado'}</p>
@@ -189,6 +285,10 @@ export function CreditCardInvoicesView() {
             <Button className="mt-4 w-full" onClick={saveCurrentInvoice} disabled={!parsed || selectedParsedCards.length === 0 || saveInvoice.isPending}>
               <FileSpreadsheet className="mr-2 h-4 w-4" />
               Salvar fatura para conferência
+            </Button>
+            <Button className="mt-2 w-full" variant="outline" onClick={exportParsedCards} disabled={!parsed || selectedParsedCards.length === 0}>
+              <Download className="mr-2 h-4 w-4" />
+              Exportar Excel processado
             </Button>
           </div>
         </CardContent>
@@ -243,33 +343,70 @@ export function CreditCardInvoicesView() {
       <div className="grid gap-4 xl:grid-cols-[340px_1fr]">
         <Card>
           <CardHeader>
-            <CardTitle className="text-lg">Faturas salvas</CardTitle>
+            <div className="flex items-center justify-between gap-2">
+              <CardTitle className="text-lg">Faturas salvas</CardTitle>
+              <Button size="sm" variant="outline" onClick={exportSelectedSavedInvoices} disabled={invoices.length === 0}>
+                <Download className="mr-2 h-4 w-4" />
+                Exportar
+              </Button>
+            </div>
           </CardHeader>
           <CardContent className="space-y-2">
+            {invoices.length > 0 && (
+              <p className="text-xs text-muted-foreground">
+                Marque uma ou mais faturas para exportar o resumo. Clique no cartão da fatura para abrir a planilha.
+              </p>
+            )}
             {invoices.length === 0 ? (
               <p className="text-sm text-muted-foreground">Nenhuma fatura salva ainda.</p>
             ) : invoices.map(invoice => {
               const active = (selectedInvoiceId || activeInvoice?.id) === invoice.id;
               return (
-                <button
+                <div
                   key={invoice.id}
-                  type="button"
-                  onClick={() => {
-                    setSelectedInvoiceId(invoice.id);
-                    setSelectedItems(new Set());
-                  }}
                   className={cn('w-full rounded-xl border p-3 text-left hover:bg-muted/50', active && 'border-primary bg-primary/5')}
                 >
                   <div className="flex items-start justify-between gap-2">
-                    <div>
-                      <p className="font-semibold">{months[invoice.competence_month - 1]}/{invoice.competence_year}</p>
+                    <div className="flex min-w-0 flex-1 gap-2">
+                      <Checkbox
+                        checked={selectedInvoiceIds.has(invoice.id)}
+                        onCheckedChange={() => toggleSavedInvoice(invoice.id)}
+                        className="mt-1"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setSelectedInvoiceId(invoice.id);
+                          setSelectedItems(new Set());
+                        }}
+                        className="min-w-0 flex-1 text-left"
+                      >
+                        <p className="truncate font-semibold">{displayInvoiceName(invoice)}</p>
+                        <p className="text-xs text-muted-foreground">{months[invoice.competence_month - 1]}/{invoice.competence_year}</p>
+                      </button>
+                    </div>
+                    <div className="flex items-center gap-1">
+                      <Button size="icon" variant="ghost" className="h-8 w-8" onClick={() => beginEditInvoice(invoice)}>
+                        <Pencil className="h-4 w-4" />
+                      </Button>
+                      <Badge variant="outline">{invoice.status}</Badge>
+                    </div>
+                  </div>
+                  {editingInvoiceId === invoice.id ? (
+                    <div className="mt-3 flex gap-2">
+                      <Input value={editingInvoiceName} onChange={(event) => setEditingInvoiceName(event.target.value)} autoFocus />
+                      <Button size="icon" onClick={saveInvoiceName} disabled={updateInvoice.isPending}>
+                        <Save className="h-4 w-4" />
+                      </Button>
+                    </div>
+                  ) : (
+                    <div className="mt-2">
                       <p className="text-xs text-muted-foreground truncate">{invoice.file_name || invoice.invoice_label || 'Fatura'}</p>
                     </div>
-                    <Badge variant="outline">{invoice.status}</Badge>
-                  </div>
+                  )}
                   <p className="mt-2 text-sm font-bold">{fmt(Number(invoice.total_amount) || 0)}</p>
                   <p className="text-xs text-muted-foreground">{invoice.total_transactions} lançamento(s)</p>
-                </button>
+                </div>
               );
             })}
           </CardContent>
@@ -300,6 +437,10 @@ export function CreditCardInvoicesView() {
               </Select>
               <Button onClick={applyBulkCategory} disabled={selectedItems.size === 0 || !bulkCategoryId || bulkUpdate.isPending}>
                 Aplicar ({selectedItems.size})
+              </Button>
+              <Button variant="outline" onClick={exportVisibleItems} disabled={!activeInvoice || filteredItems.length === 0}>
+                <Download className="mr-2 h-4 w-4" />
+                Excel
               </Button>
             </div>
 
@@ -354,4 +495,69 @@ function Mini({ label, value, strong }: { label: string; value: string; strong?:
       <p className={cn('truncate text-xs', strong && 'font-bold text-primary')}>{value}</p>
     </div>
   );
+}
+
+function defaultInvoiceName(parsed: ParsedCreditCardStatement, fileName: string, month: number, year: number) {
+  const holder = parsed.meta.holder ? ` - ${parsed.meta.holder}` : '';
+  const source = parsed.meta.invoice || fileName.replace(/\.(xlsx|xls)$/i, '') || 'Fatura';
+  return `${source}${holder} - ${months[month - 1]}/${year}`;
+}
+
+function displayInvoiceName(invoice: CreditCardInvoice) {
+  return invoice.invoice_label || invoice.file_name || `Fatura ${months[invoice.competence_month - 1]}/${invoice.competence_year}`;
+}
+
+function summarizeCards(invoice: CreditCardInvoice) {
+  const cards = Array.isArray(invoice.selected_cards) ? invoice.selected_cards : [];
+  return cards
+    .map((card: any) => [card.name, card.finalDigits ? `final ${card.finalDigits}` : ''].filter(Boolean).join(' '))
+    .filter(Boolean)
+    .join(', ');
+}
+
+function exportSavedInvoiceRows(invoice: CreditCardInvoice, rows: CreditCardInvoiceItem[]) {
+  exportRowsToExcel(
+    rows.map(item => ({
+      'Fatura': displayInvoiceName(invoice),
+      'Competência': `${months[invoice.competence_month - 1]}/${invoice.competence_year}`,
+      'Data': item.transaction_date ? new Date(`${item.transaction_date}T00:00:00`).toLocaleDateString('pt-BR') : '',
+      'Descrição': item.description,
+      'Cartão': item.card_name,
+      'Final': item.card_final_digits || '',
+      'Tipo do cartão': item.card_type || '',
+      'Parcela': item.installment || '',
+      'Escopo': item.scope,
+      'País': item.country || '',
+      'Valor USD': item.usd_value ?? '',
+      'Câmbio': item.fx_rate ?? '',
+      'Sugestão': item.category_hint || '',
+      'Categoria': item.transaction_categories?.name || '',
+      'Status': item.review_status,
+      'Valor': Number(item.amount) || 0,
+      'Observações': item.notes || '',
+    })),
+    slugFileName(displayInvoiceName(invoice)),
+  );
+}
+
+function exportRowsToExcel(rows: Array<Record<string, unknown>>, baseFileName: string) {
+  if (rows.length === 0) {
+    toast.error('Não há dados para exportar.');
+    return;
+  }
+
+  const worksheet = XLSX.utils.json_to_sheet(rows);
+  const workbook = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(workbook, worksheet, 'Fatura');
+  XLSX.writeFile(workbook, `${slugFileName(baseFileName)}.xlsx`);
+  toast.success('Excel gerado.');
+}
+
+function slugFileName(value: string) {
+  return value
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-zA-Z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .toLowerCase() || 'fatura-cartao';
 }
