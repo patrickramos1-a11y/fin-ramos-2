@@ -342,11 +342,21 @@ export function useConvertCreditCardItemsToTransactions() {
         item.usage_scope !== 'EMPRESA' ||
         item.conversion_status !== 'PRONTO' ||
         !!item.transaction_id ||
-        !item.transaction_category_id ||
-        !item.cliente_id
+        !item.transaction_category_id
       );
       if (invalid.length > 0) {
-        throw new Error('Existem itens sem marcação Empresa, sem status Pronto, já convertidos, sem categoria ou sem cliente.');
+        throw new Error('Existem itens sem marcação Empresa, sem status Pronto, já convertidos ou sem categoria.');
+      }
+
+      const { data: ramosClient, error: clientError } = await (supabase as any)
+        .from('recurring_clients')
+        .select('id, name')
+        .ilike('name', '%ramos%')
+        .limit(1)
+        .maybeSingle();
+      if (clientError) throw clientError;
+      if (!ramosClient?.id) {
+        throw new Error('Cliente Ramos Engenharia não encontrado. Cadastre um cliente com "Ramos" no nome para converter itens do cartão.');
       }
 
       const transactionsToInsert = rows.map((item) => {
@@ -359,7 +369,7 @@ export function useConvertCreditCardItemsToTransactions() {
           tipo_movimento: 'SAIDA',
           natureza: 'AVULSA',
           origem: 'IMPORTACAO',
-          cliente_id: item.cliente_id,
+          cliente_id: item.cliente_id || ramosClient.id,
           competencia_mes: invoice.competence_month,
           competencia_ano: invoice.competence_year,
           valor: Math.abs(Number(item.amount) || 0),

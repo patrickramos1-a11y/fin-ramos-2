@@ -1,6 +1,24 @@
-import { useEffect, useMemo, useState } from 'react';
+import { Fragment, useEffect, useMemo, useState } from 'react';
 import * as XLSX from 'xlsx';
-import { Upload, CreditCard, FileSpreadsheet, CheckCircle2, Search, Tags, Download, Pencil, Save, Trash2, Layers3, ArrowRightCircle } from 'lucide-react';
+import {
+  Upload,
+  CreditCard,
+  FileSpreadsheet,
+  CheckCircle2,
+  Search,
+  Tags,
+  Download,
+  Pencil,
+  Save,
+  Trash2,
+  Layers3,
+  ArrowRightCircle,
+  ChevronLeft,
+  ChevronRight,
+  ArrowUp,
+  ArrowDown,
+  ArrowUpDown,
+} from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
@@ -24,8 +42,7 @@ import {
   type CreditCardInvoice,
   type CreditCardInvoiceItem,
 } from '@/hooks/useCreditCardInvoices';
-import { useAccounts, useCostCenters, useTransactionCategories } from '@/hooks/useFinancialConfig';
-import { useFinancialEntities } from '@/hooks/useFinancialEntities';
+import { useTransactionCategories } from '@/hooks/useFinancialConfig';
 import { useClients } from '@/hooks/useTransactions';
 import { cn } from '@/lib/utils';
 
@@ -35,6 +52,9 @@ const months = [
 ];
 
 const fmt = (value: number) => value.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
+
+type SortKey = 'date' | 'description' | 'card' | 'scope' | 'category' | 'client' | 'amount' | 'conversion';
+type SortDirection = 'asc' | 'desc';
 
 export function CreditCardInvoicesView() {
   const now = new Date();
@@ -46,19 +66,19 @@ export function CreditCardInvoicesView() {
   const [year, setYear] = useState(now.getFullYear());
   const [selectedInvoiceId, setSelectedInvoiceId] = useState<string | null>(null);
   const [managerOpen, setManagerOpen] = useState(false);
+  const [invoiceSidebarCollapsed, setInvoiceSidebarCollapsed] = useState(false);
   const [selectedInvoiceIds, setSelectedInvoiceIds] = useState<Set<string>>(new Set());
   const [editingInvoiceId, setEditingInvoiceId] = useState<string | null>(null);
   const [editingInvoiceName, setEditingInvoiceName] = useState('');
   const [search, setSearch] = useState('');
   const [selectedItems, setSelectedItems] = useState<Set<string>>(new Set());
-  const [cardFilter, setCardFilter] = useState('ALL');
+  const [selectedCardKeys, setSelectedCardKeys] = useState<Set<string>>(new Set());
   const [scopeFilter, setScopeFilter] = useState('ALL');
   const [conversionFilter, setConversionFilter] = useState('ALL');
+  const [groupByMerchant, setGroupByMerchant] = useState(false);
+  const [sortKey, setSortKey] = useState<SortKey>('date');
+  const [sortDirection, setSortDirection] = useState<SortDirection>('asc');
   const [bulkCategoryId, setBulkCategoryId] = useState('');
-  const [bulkAccountId, setBulkAccountId] = useState('');
-  const [bulkClientId, setBulkClientId] = useState('');
-  const [bulkCostCenterId, setBulkCostCenterId] = useState('');
-  const [bulkEntityId, setBulkEntityId] = useState('');
   const [bulkScope, setBulkScope] = useState('');
   const [bulkConversionStatus, setBulkConversionStatus] = useState('');
 
@@ -71,10 +91,7 @@ export function CreditCardInvoicesView() {
     }
   }, [invoices, selectedInvoiceId]);
   const { data: categories = [] } = useTransactionCategories();
-  const { data: accounts = [] } = useAccounts();
   const { data: clients = [] } = useClients();
-  const { data: costCenters = [] } = useCostCenters();
-  const { data: entities = [] } = useFinancialEntities();
   const saveInvoice = useSaveCreditCardInvoice();
   const updateInvoice = useUpdateCreditCardInvoice();
   const deleteInvoice = useDeleteCreditCardInvoice();
@@ -88,6 +105,7 @@ export function CreditCardInvoicesView() {
 
   const totalSelected = selectedParsedCards.reduce((sum, card) => sum + card.total, 0);
   const totalTx = selectedParsedCards.reduce((sum, card) => sum + card.transactions.length, 0);
+  const ramosClient = useMemo(() => findRamosClient(clients as any[]), [clients]);
 
   const activeInvoice = invoices.find(invoice => invoice.id === selectedInvoiceId) || invoices[0] || null;
   const invoiceCards = useMemo(() => {
@@ -118,12 +136,13 @@ export function CreditCardInvoicesView() {
   const filteredItems = useMemo(() => {
     const text = search.trim().toLowerCase();
     return items.filter(item => {
-      if (cardFilter !== 'ALL' && cardKey(item) !== cardFilter) return false;
+      if (selectedCardKeys.size > 0 && !selectedCardKeys.has(cardKey(item))) return false;
       if (scopeFilter !== 'ALL' && item.usage_scope !== scopeFilter) return false;
       if (conversionFilter !== 'ALL' && item.conversion_status !== conversionFilter) return false;
       if (!text) return true;
       return (
         item.description.toLowerCase().includes(text) ||
+        merchantLabel(item).toLowerCase().includes(text) ||
         item.card_name.toLowerCase().includes(text) ||
         item.category_hint?.toLowerCase().includes(text) ||
         item.transaction_categories?.name?.toLowerCase().includes(text) ||
@@ -131,7 +150,17 @@ export function CreditCardInvoicesView() {
         item.recurring_clients?.name?.toLowerCase().includes(text)
       );
     });
-  }, [items, search, cardFilter, scopeFilter, conversionFilter]);
+  }, [items, search, selectedCardKeys, scopeFilter, conversionFilter]);
+
+  const visibleItems = useMemo(
+    () => sortItems(filteredItems, sortKey, sortDirection),
+    [filteredItems, sortKey, sortDirection],
+  );
+  const groupedVisibleItems = useMemo(() => groupItemsByMerchant(visibleItems), [visibleItems]);
+  const allVisibleSelected = visibleItems.length > 0 && visibleItems.every(item => selectedItems.has(item.id));
+  const selectedCardSummary = selectedCardKeys.size === 0
+    ? 'Todos cartões'
+    : `${selectedCardKeys.size} cartão(ões) selecionado(s)`;
 
   const readyItems = useMemo(() => items.filter(isReadyToConvert), [items]);
   const selectedReadyItems = useMemo(
@@ -193,6 +222,48 @@ export function CreditCardInvoicesView() {
     });
   };
 
+  const toggleVisibleItems = () => {
+    setSelectedItems(prev => {
+      const next = new Set(prev);
+      if (allVisibleSelected) {
+        visibleItems.forEach(item => next.delete(item.id));
+      } else {
+        visibleItems.forEach(item => next.add(item.id));
+      }
+      return next;
+    });
+  };
+
+  const toggleMerchantGroup = (groupItems: CreditCardInvoiceItem[]) => {
+    setSelectedItems(prev => {
+      const next = new Set(prev);
+      const allSelected = groupItems.every(item => next.has(item.id));
+      groupItems.forEach(item => {
+        if (allSelected) next.delete(item.id);
+        else next.add(item.id);
+      });
+      return next;
+    });
+  };
+
+  const toggleInvoiceCard = (key: string) => {
+    setSelectedCardKeys(prev => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+  };
+
+  const changeSort = (key: SortKey) => {
+    if (sortKey === key) {
+      setSortDirection(prev => prev === 'asc' ? 'desc' : 'asc');
+      return;
+    }
+    setSortKey(key);
+    setSortDirection(key === 'amount' ? 'desc' : 'asc');
+  };
+
   const toggleSavedInvoice = (id: string) => {
     setSelectedInvoiceIds(prev => {
       const next = new Set(prev);
@@ -243,7 +314,7 @@ export function CreditCardInvoicesView() {
     setSelectedInvoiceId(invoice.id);
     setManagerOpen(true);
     setSelectedItems(new Set());
-    setCardFilter('ALL');
+    setSelectedCardKeys(new Set());
     setScopeFilter('ALL');
     setConversionFilter('ALL');
     setSearch('');
@@ -274,8 +345,8 @@ export function CreditCardInvoicesView() {
   };
 
   const exportVisibleItems = () => {
-    if (!activeInvoice || filteredItems.length === 0) return;
-    exportSavedInvoiceRows(activeInvoice, filteredItems);
+    if (!activeInvoice || visibleItems.length === 0) return;
+    exportSavedInvoiceRows(activeInvoice, visibleItems);
   };
 
   const exportSelectedSavedInvoices = () => {
@@ -303,15 +374,20 @@ export function CreditCardInvoicesView() {
     if (bulkCategoryId) {
       updates.transaction_category_id = bulkCategoryId;
       const category = (categories as any[]).find(item => item.id === bulkCategoryId);
-      if (category?.default_account_id && !bulkAccountId) updates.account_id = category.default_account_id;
-      if (category?.cost_center_id && !bulkCostCenterId) updates.cost_center_id = category.cost_center_id;
+      if (category?.default_account_id) updates.account_id = category.default_account_id;
+      if (category?.cost_center_id) updates.cost_center_id = category.cost_center_id;
     }
-    if (bulkAccountId) updates.account_id = bulkAccountId;
-    if (bulkClientId) updates.cliente_id = bulkClientId;
-    if (bulkCostCenterId) updates.cost_center_id = bulkCostCenterId;
-    if (bulkEntityId) updates.entity_id = bulkEntityId;
     if (bulkScope) updates.usage_scope = bulkScope;
     if (bulkConversionStatus) updates.conversion_status = bulkConversionStatus;
+
+    const shouldAttachRamos = bulkScope === 'EMPRESA' || bulkConversionStatus === 'PRONTO';
+    if (shouldAttachRamos) {
+      if (!ramosClient?.id) {
+        toast.error('Cliente Ramos Engenharia não encontrado. Cadastre ou mantenha um cliente com "Ramos" no nome para converter itens empresariais.');
+        return;
+      }
+      updates.cliente_id = ramosClient.id;
+    }
 
     if (Object.keys(updates).length === 0) {
       toast.error('Escolha pelo menos uma alteração para aplicar.');
@@ -325,10 +401,6 @@ export function CreditCardInvoicesView() {
       onSuccess: () => {
         setSelectedItems(new Set());
         setBulkCategoryId('');
-        setBulkAccountId('');
-        setBulkClientId('');
-        setBulkCostCenterId('');
-        setBulkEntityId('');
         setBulkScope('');
         setBulkConversionStatus('');
       },
@@ -342,6 +414,33 @@ export function CreditCardInvoicesView() {
       onSuccess: () => setSelectedItems(new Set()),
     });
   };
+
+  const renderInvoiceItemRow = (item: CreditCardInvoiceItem) => (
+    <tr key={item.id} className={selectedItems.has(item.id) ? 'bg-primary/5' : ''}>
+      <td className="p-3"><Checkbox checked={selectedItems.has(item.id)} onCheckedChange={() => toggleItem(item.id)} /></td>
+      <td className="whitespace-nowrap p-3">{item.transaction_date ? new Date(`${item.transaction_date}T00:00:00`).toLocaleDateString('pt-BR') : '-'}</td>
+      <td className="p-3">
+        <p className="font-medium">{item.description}</p>
+        <p className="text-xs text-muted-foreground">{item.installment || merchantLabel(item)}</p>
+      </td>
+      <td className="p-3 text-xs">{item.card_name} {item.card_final_digits ? `• ${item.card_final_digits}` : ''}</td>
+      <td className="p-3"><ScopeBadge scope={item.usage_scope} /></td>
+      <td className="p-3"><Badge variant="secondary">{item.category_hint || 'Outros'}</Badge></td>
+      <td className="p-3 text-xs">{item.transaction_categories?.name || <span className="text-muted-foreground">não vinculada</span>}</td>
+      <td className="p-3 text-xs">{item.recurring_clients?.name || ramosClient?.name || <span className="text-muted-foreground">Ramos automática</span>}</td>
+      <td className="p-3 text-xs">
+        <p>{item.accounts?.name || item.transaction_categories?.default_account_id ? (item.accounts?.name || 'Pela categoria') : <span className="text-muted-foreground">sem conta</span>}</p>
+        <p className="text-muted-foreground">{item.cost_centers?.name || item.transaction_categories?.cost_center_id ? (item.cost_centers?.name || 'Pela categoria') : 'sem centro'}</p>
+      </td>
+      <td className="p-3 text-right font-bold text-expense">{fmt(Number(item.amount) || 0)}</td>
+      <td className="p-3">
+        <div className="space-y-1">
+          <ConversionBadge status={item.conversion_status} />
+          {item.transaction_id && <p className="text-[10px] text-muted-foreground">Transação criada</p>}
+        </div>
+      </td>
+    </tr>
+  );
 
   return (
     <div className="space-y-6">
@@ -460,15 +559,38 @@ export function CreditCardInvoicesView() {
         </Card>
       )}
 
-      <div className="grid gap-4 xl:grid-cols-[340px_1fr]">
-        <Card>
+      <div className={cn('grid gap-4', invoiceSidebarCollapsed ? 'xl:grid-cols-[64px_1fr]' : 'xl:grid-cols-[340px_1fr]')}>
+        <Card className={cn(invoiceSidebarCollapsed && 'overflow-hidden')}>
+          {invoiceSidebarCollapsed ? (
+            <CardContent className="flex h-full min-h-80 flex-col items-center gap-3 p-3">
+              <Button
+                size="icon"
+                variant="outline"
+                title="Mostrar faturas salvas"
+                onClick={() => setInvoiceSidebarCollapsed(false)}
+              >
+                <ChevronRight className="h-4 w-4" />
+              </Button>
+              <div className="flex flex-1 items-center">
+                <p className="-rotate-90 whitespace-nowrap text-xs font-semibold uppercase tracking-[0.18em] text-muted-foreground">
+                  {invoices.length} faturas
+                </p>
+              </div>
+            </CardContent>
+          ) : (
+          <>
           <CardHeader>
             <div className="flex items-center justify-between gap-2">
               <CardTitle className="text-lg">Faturas salvas</CardTitle>
-              <Button size="sm" variant="outline" onClick={exportSelectedSavedInvoices} disabled={invoices.length === 0}>
-                <Download className="mr-2 h-4 w-4" />
-                Exportar
-              </Button>
+              <div className="flex items-center gap-2">
+                <Button size="icon" variant="ghost" title="Recolher lista de faturas" onClick={() => setInvoiceSidebarCollapsed(true)}>
+                  <ChevronLeft className="h-4 w-4" />
+                </Button>
+                <Button size="sm" variant="outline" onClick={exportSelectedSavedInvoices} disabled={invoices.length === 0}>
+                  <Download className="mr-2 h-4 w-4" />
+                  Exportar
+                </Button>
+              </div>
             </div>
           </CardHeader>
           <CardContent className="space-y-2">
@@ -535,6 +657,8 @@ export function CreditCardInvoicesView() {
               );
             })}
           </CardContent>
+          </>
+          )}
         </Card>
 
         <Card>
@@ -575,10 +699,13 @@ export function CreditCardInvoicesView() {
               <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
                 <button
                   type="button"
-                  onClick={() => setCardFilter('ALL')}
-                  className={cn('rounded-xl border p-3 text-left transition hover:border-primary/50', cardFilter === 'ALL' && 'border-primary bg-primary/5')}
+                  onClick={() => setSelectedCardKeys(new Set())}
+                  className={cn('rounded-xl border p-3 text-left transition hover:border-primary/50', selectedCardKeys.size === 0 && 'border-primary bg-primary/5')}
                 >
-                  <p className="font-semibold">Todos os cartões</p>
+                  <div className="flex items-start justify-between gap-2">
+                    <p className="font-semibold">Todos os cartões</p>
+                    <Checkbox checked={selectedCardKeys.size === 0} />
+                  </div>
                   <p className="text-xs text-muted-foreground">{items.length} lançamento(s)</p>
                   <p className="mt-2 text-sm font-bold">{fmt(invoiceStats.total)}</p>
                 </button>
@@ -586,10 +713,13 @@ export function CreditCardInvoicesView() {
                   <button
                     key={card.key}
                     type="button"
-                    onClick={() => setCardFilter(card.key)}
-                    className={cn('rounded-xl border p-3 text-left transition hover:border-primary/50', cardFilter === card.key && 'border-primary bg-primary/5')}
+                    onClick={() => toggleInvoiceCard(card.key)}
+                    className={cn('rounded-xl border p-3 text-left transition hover:border-primary/50', selectedCardKeys.has(card.key) && 'border-primary bg-primary/5')}
                   >
-                    <p className="truncate font-semibold">{card.label}</p>
+                    <div className="flex items-start justify-between gap-2">
+                      <p className="truncate font-semibold">{card.label}</p>
+                      <Checkbox checked={selectedCardKeys.has(card.key)} />
+                    </div>
                     <p className="text-xs text-muted-foreground">{card.count} lançamento(s)</p>
                     <p className="mt-2 text-sm font-bold">{fmt(card.total)}</p>
                   </button>
@@ -615,18 +745,11 @@ export function CreditCardInvoicesView() {
               </CardContent>
             </Card>
 
-            <div className="grid gap-2 lg:grid-cols-[1fr_repeat(3,180px)]">
+            <div className="grid gap-2 lg:grid-cols-[1fr_repeat(4,180px)]">
               <div className="relative flex-1">
                 <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
                 <Input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Buscar descrição, cartão, sugestão ou categoria..." className="pl-9" />
               </div>
-              <Select value={cardFilter} onValueChange={setCardFilter}>
-                <SelectTrigger><SelectValue placeholder="Cartão" /></SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="ALL">Todos cartões</SelectItem>
-                  {invoiceCards.map(card => <SelectItem key={card.key} value={card.key}>{card.label}</SelectItem>)}
-                </SelectContent>
-              </Select>
               <Select value={scopeFilter} onValueChange={setScopeFilter}>
                 <SelectTrigger><SelectValue placeholder="Escopo" /></SelectTrigger>
                 <SelectContent>
@@ -646,6 +769,16 @@ export function CreditCardInvoicesView() {
                   <SelectItem value="IGNORADO">Ignorado</SelectItem>
                 </SelectContent>
               </Select>
+              <Button
+                variant={groupByMerchant ? 'default' : 'outline'}
+                onClick={() => setGroupByMerchant(prev => !prev)}
+              >
+                <Layers3 className="mr-2 h-4 w-4" />
+                Agrupar
+              </Button>
+              <div className="flex items-center rounded-md border bg-background px-3 text-xs text-muted-foreground">
+                {selectedCardSummary}
+              </div>
             </div>
 
             <div className="rounded-2xl border bg-muted/20 p-3">
@@ -685,31 +818,11 @@ export function CreditCardInvoicesView() {
                       ))}
                   </SelectContent>
                 </Select>
-                <Select value={bulkAccountId} onValueChange={setBulkAccountId}>
-                  <SelectTrigger><SelectValue placeholder="Conta" /></SelectTrigger>
-                  <SelectContent>
-                    {(accounts as any[]).map(account => <SelectItem key={account.id} value={account.id}>{account.name}</SelectItem>)}
-                  </SelectContent>
-                </Select>
-                <Select value={bulkClientId} onValueChange={setBulkClientId}>
-                  <SelectTrigger><SelectValue placeholder="Cliente / empresa" /></SelectTrigger>
-                  <SelectContent>
-                    {(clients as any[]).map(client => <SelectItem key={client.id} value={client.id}>{client.name}</SelectItem>)}
-                  </SelectContent>
-                </Select>
-                <Select value={bulkCostCenterId} onValueChange={setBulkCostCenterId}>
-                  <SelectTrigger><SelectValue placeholder="Centro de custo" /></SelectTrigger>
-                  <SelectContent>
-                    {(costCenters as any[]).map(center => <SelectItem key={center.id} value={center.id}>{center.name}</SelectItem>)}
-                  </SelectContent>
-                </Select>
-                <Select value={bulkEntityId} onValueChange={setBulkEntityId}>
-                  <SelectTrigger><SelectValue placeholder="Entidade" /></SelectTrigger>
-                  <SelectContent>
-                    {(entities as any[]).map(entity => <SelectItem key={entity.id} value={entity.id}>{entity.name}</SelectItem>)}
-                  </SelectContent>
-                </Select>
-                <Button variant="outline" onClick={exportVisibleItems} disabled={!activeInvoice || filteredItems.length === 0}>
+                <div className="rounded-lg border bg-white px-3 py-2 text-xs text-muted-foreground">
+                  <p className="font-medium text-foreground">Regra automática</p>
+                  <p>Cliente: {ramosClient?.name || 'Ramos Engenharia'}. Conta e centro vêm da categoria.</p>
+                </div>
+                <Button variant="outline" onClick={exportVisibleItems} disabled={!activeInvoice || visibleItems.length === 0}>
                   <Download className="mr-2 h-4 w-4" />
                   Exportar visão atual
                 </Button>
@@ -720,50 +833,46 @@ export function CreditCardInvoicesView() {
               <table className="w-full text-sm">
                 <thead className="bg-muted/60 text-xs">
                   <tr>
-                    <th className="w-10 p-3"></th>
-                    <th className="p-3 text-left">Data</th>
-                    <th className="p-3 text-left">Descrição</th>
-                    <th className="p-3 text-left">Cartão</th>
-                    <th className="p-3 text-left">Uso</th>
+                    <th className="w-10 p-3">
+                      <Checkbox checked={allVisibleSelected} onCheckedChange={toggleVisibleItems} />
+                    </th>
+                    <th className="p-3 text-left"><SortHeader label="Data" sortKey="date" activeKey={sortKey} direction={sortDirection} onSort={changeSort} /></th>
+                    <th className="p-3 text-left"><SortHeader label="Descrição" sortKey="description" activeKey={sortKey} direction={sortDirection} onSort={changeSort} /></th>
+                    <th className="p-3 text-left"><SortHeader label="Cartão" sortKey="card" activeKey={sortKey} direction={sortDirection} onSort={changeSort} /></th>
+                    <th className="p-3 text-left"><SortHeader label="Uso" sortKey="scope" activeKey={sortKey} direction={sortDirection} onSort={changeSort} /></th>
                     <th className="p-3 text-left">Sugestão</th>
-                    <th className="p-3 text-left">Categoria</th>
-                    <th className="p-3 text-left">Cliente</th>
+                    <th className="p-3 text-left"><SortHeader label="Categoria" sortKey="category" activeKey={sortKey} direction={sortDirection} onSort={changeSort} /></th>
+                    <th className="p-3 text-left"><SortHeader label="Cliente" sortKey="client" activeKey={sortKey} direction={sortDirection} onSort={changeSort} /></th>
                     <th className="p-3 text-left">Conta / C. Custo</th>
-                    <th className="p-3 text-right">Valor</th>
-                    <th className="p-3 text-left">Conversão</th>
+                    <th className="p-3 text-right"><SortHeader label="Valor" sortKey="amount" activeKey={sortKey} direction={sortDirection} onSort={changeSort} align="right" /></th>
+                    <th className="p-3 text-left"><SortHeader label="Conversão" sortKey="conversion" activeKey={sortKey} direction={sortDirection} onSort={changeSort} /></th>
                   </tr>
                 </thead>
                 <tbody className="divide-y">
                   {itemsLoading ? (
                     <tr><td colSpan={11} className="p-8 text-center text-muted-foreground">Carregando...</td></tr>
-                  ) : filteredItems.length === 0 ? (
+                  ) : visibleItems.length === 0 ? (
                     <tr><td colSpan={11} className="p-8 text-center text-muted-foreground">Nenhum lançamento para exibir.</td></tr>
-                  ) : filteredItems.map(item => (
-                    <tr key={item.id} className={selectedItems.has(item.id) ? 'bg-primary/5' : ''}>
-                      <td className="p-3"><Checkbox checked={selectedItems.has(item.id)} onCheckedChange={() => toggleItem(item.id)} /></td>
-                      <td className="whitespace-nowrap p-3">{item.transaction_date ? new Date(`${item.transaction_date}T00:00:00`).toLocaleDateString('pt-BR') : '-'}</td>
-                      <td className="p-3">
-                        <p className="font-medium">{item.description}</p>
-                        <p className="text-xs text-muted-foreground">{item.installment || item.scope}</p>
-                      </td>
-                      <td className="p-3 text-xs">{item.card_name} {item.card_final_digits ? `• ${item.card_final_digits}` : ''}</td>
-                      <td className="p-3"><ScopeBadge scope={item.usage_scope} /></td>
-                      <td className="p-3"><Badge variant="secondary">{item.category_hint || 'Outros'}</Badge></td>
-                      <td className="p-3 text-xs">{item.transaction_categories?.name || <span className="text-muted-foreground">não vinculada</span>}</td>
-                      <td className="p-3 text-xs">{item.recurring_clients?.name || <span className="text-muted-foreground">não vinculado</span>}</td>
-                      <td className="p-3 text-xs">
-                        <p>{item.accounts?.name || <span className="text-muted-foreground">sem conta</span>}</p>
-                        <p className="text-muted-foreground">{item.cost_centers?.name || 'sem centro'}</p>
-                      </td>
-                      <td className="p-3 text-right font-bold text-expense">{fmt(Number(item.amount) || 0)}</td>
-                      <td className="p-3">
-                        <div className="space-y-1">
-                          <ConversionBadge status={item.conversion_status} />
-                          {item.transaction_id && <p className="text-[10px] text-muted-foreground">Transação criada</p>}
-                        </div>
-                      </td>
-                    </tr>
-                  ))}
+                  ) : groupByMerchant ? groupedVisibleItems.map(group => (
+                    <Fragment key={group.key}>
+                      <tr className="bg-emerald-50/70">
+                        <td className="p-3">
+                          <Checkbox
+                            checked={group.items.every(item => selectedItems.has(item.id))}
+                            onCheckedChange={() => toggleMerchantGroup(group.items)}
+                          />
+                        </td>
+                        <td colSpan={7} className="p-3">
+                          <p className="font-semibold">{group.label}</p>
+                          <p className="text-xs text-muted-foreground">{group.items.length} lançamento(s) agrupado(s) por estabelecimento</p>
+                        </td>
+                        <td className="p-3 text-xs text-muted-foreground">{selectedCardSummary}</td>
+                        <td className="p-3 text-right font-bold text-expense">{fmt(group.total)}</td>
+                        <td className="p-3 text-xs text-muted-foreground">Grupo</td>
+                      </tr>
+                      {group.items.map(renderInvoiceItemRow)}
+                    </Fragment>
+                  )) : visibleItems.map(renderInvoiceItemRow)}
                 </tbody>
               </table>
             </div>
@@ -773,6 +882,35 @@ export function CreditCardInvoicesView() {
         </Card>
       </div>
     </div>
+  );
+}
+
+function SortHeader({
+  label,
+  sortKey,
+  activeKey,
+  direction,
+  onSort,
+  align = 'left',
+}: {
+  label: string;
+  sortKey: SortKey;
+  activeKey: SortKey;
+  direction: SortDirection;
+  onSort: (key: SortKey) => void;
+  align?: 'left' | 'right';
+}) {
+  const active = activeKey === sortKey;
+  const Icon = active ? (direction === 'asc' ? ArrowUp : ArrowDown) : ArrowUpDown;
+  return (
+    <button
+      type="button"
+      onClick={() => onSort(sortKey)}
+      className={cn('inline-flex w-full items-center gap-1 text-xs font-semibold text-foreground hover:text-primary', align === 'right' && 'justify-end')}
+    >
+      {label}
+      <Icon className={cn('h-3.5 w-3.5', active ? 'text-primary' : 'text-muted-foreground')} />
+    </button>
   );
 }
 
@@ -864,13 +1002,69 @@ function cardLabel(item: CreditCardInvoiceItem) {
   return [item.card_name, item.card_final_digits ? `final ${item.card_final_digits}` : null].filter(Boolean).join(' • ');
 }
 
+function merchantLabel(item: CreditCardInvoiceItem) {
+  return normalizeMerchantName(item.normalized_description || item.description || 'Sem descrição');
+}
+
+function normalizeMerchantName(value: string) {
+  return value
+    .replace(/\b\d{1,2}\/\d{1,2}(\b|$)/g, '')
+    .replace(/\bparc(ela)?\.?\s*\d+\s*(de|\/)\s*\d+\b/gi, '')
+    .replace(/\b\d{1,2}\/\d{1,2}\b/g, '')
+    .replace(/\s{2,}/g, ' ')
+    .trim()
+    .toUpperCase();
+}
+
+function groupItemsByMerchant(items: CreditCardInvoiceItem[]) {
+  const map = new Map<string, { key: string; label: string; total: number; items: CreditCardInvoiceItem[] }>();
+  for (const item of items) {
+    const label = merchantLabel(item);
+    const key = label || 'SEM_DESCRICAO';
+    const current = map.get(key) || { key, label: label || 'Sem descrição', total: 0, items: [] };
+    current.total += Number(item.amount) || 0;
+    current.items.push(item);
+    map.set(key, current);
+  }
+  return Array.from(map.values()).sort((a, b) => b.total - a.total || a.label.localeCompare(b.label));
+}
+
+function sortItems(items: CreditCardInvoiceItem[], sortKey: SortKey, direction: SortDirection) {
+  const factor = direction === 'asc' ? 1 : -1;
+  return [...items].sort((a, b) => compareSortValue(a, b, sortKey) * factor);
+}
+
+function compareSortValue(a: CreditCardInvoiceItem, b: CreditCardInvoiceItem, sortKey: SortKey) {
+  if (sortKey === 'amount') return (Number(a.amount) || 0) - (Number(b.amount) || 0);
+  const aValue = getSortValue(a, sortKey);
+  const bValue = getSortValue(b, sortKey);
+  return aValue.localeCompare(bValue, 'pt-BR', { numeric: true, sensitivity: 'base' });
+}
+
+function getSortValue(item: CreditCardInvoiceItem, sortKey: SortKey) {
+  if (sortKey === 'date') return item.transaction_date || '';
+  if (sortKey === 'description') return item.description || '';
+  if (sortKey === 'card') return cardLabel(item);
+  if (sortKey === 'scope') return item.usage_scope || '';
+  if (sortKey === 'category') return item.transaction_categories?.name || item.category_hint || '';
+  if (sortKey === 'client') return item.recurring_clients?.name || '';
+  if (sortKey === 'conversion') return item.conversion_status || '';
+  return '';
+}
+
+function findRamosClient(clients: any[]) {
+  return clients.find(client => /ramos engenharia/i.test(client.name || ''))
+    || clients.find(client => /^ramos$/i.test(client.name || ''))
+    || clients.find(client => /ramos/i.test(client.name || ''))
+    || null;
+}
+
 function isReadyToConvert(item: CreditCardInvoiceItem) {
   return (
     item.usage_scope === 'EMPRESA' &&
     item.conversion_status === 'PRONTO' &&
     !item.transaction_id &&
     !!item.transaction_category_id &&
-    !!item.cliente_id &&
     !!(item.account_id || item.transaction_categories?.default_account_id) &&
     !!(item.cost_center_id || item.transaction_categories?.cost_center_id)
   );
@@ -887,17 +1081,18 @@ function ScopeBadge({ scope }: { scope: CreditCardInvoiceItem['usage_scope'] }) 
 }
 
 function ConversionBadge({ status }: { status: CreditCardInvoiceItem['conversion_status'] }) {
+  const normalized = status || 'NAO_SELECIONADO';
   const label = {
     NAO_SELECIONADO: 'Não selecionado',
     PRONTO: 'Pronto',
     CONVERTIDO: 'Convertido',
     IGNORADO: 'Ignorado',
-  }[status];
-  const className = status === 'PRONTO'
+  }[normalized];
+  const className = normalized === 'PRONTO'
     ? 'border-emerald-200 bg-emerald-50 text-emerald-700'
-    : status === 'CONVERTIDO'
+    : normalized === 'CONVERTIDO'
       ? 'border-blue-200 bg-blue-50 text-blue-700'
-      : status === 'IGNORADO'
+      : normalized === 'IGNORADO'
         ? 'border-slate-200 bg-slate-50 text-slate-700'
         : 'border-amber-200 bg-amber-50 text-amber-700';
   return <Badge variant="outline" className={className}>{label}</Badge>;
