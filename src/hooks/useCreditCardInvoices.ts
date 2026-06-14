@@ -44,11 +44,11 @@ export type CreditCardInvoiceItem = {
   account_id: string | null;
   cliente_id: string | null;
   cost_center_id: string | null;
-  entity_id: string | null;
-  notes: string | null;
-  review_status: 'PENDENTE' | 'REVISADO' | 'IGNORADO' | 'CONVERTIDO';
-  usage_scope: 'EMPRESA' | 'PESSOAL' | 'DUVIDA';
-  conversion_status: 'NAO_SELECIONADO' | 'PRONTO' | 'CONVERTIDO' | 'IGNORADO';
+        entity_id: string | null;
+        notes: string | null;
+        review_status: 'PENDENTE' | 'REVISADO' | 'IGNORADO' | 'CONVERTIDO';
+  usage_scope?: 'EMPRESA' | 'PESSOAL' | 'DUVIDA';
+  conversion_status?: 'NAO_SELECIONADO' | 'PRONTO' | 'CONVERTIDO' | 'IGNORADO';
   transaction_id: string | null;
   converted_at: string | null;
   transaction_categories?: { id?: string; name: string; color?: string | null; default_account_id?: string | null; cost_center_id?: string | null } | null;
@@ -92,8 +92,20 @@ export function useCreditCardInvoiceItems(invoiceId?: string | null) {
         .eq('invoice_id', invoiceId)
         .order('transaction_date', { ascending: true })
         .order('description', { ascending: true });
-      if (error) throw error;
-      return (data || []) as CreditCardInvoiceItem[];
+      if (error) {
+        if (isMissingCreditCardWorkflowSchema(error)) {
+          const { data: fallbackData, error: fallbackError } = await (supabase as any)
+            .from('credit_card_invoice_items')
+            .select('*, transaction_categories:transaction_category_id(id, name, color)')
+            .eq('invoice_id', invoiceId)
+            .order('transaction_date', { ascending: true })
+            .order('description', { ascending: true });
+          if (fallbackError) throw fallbackError;
+          return normalizeFetchedItems(fallbackData || []);
+        }
+        throw error;
+      }
+      return normalizeFetchedItems(data || []);
     },
   });
 }
@@ -170,7 +182,15 @@ export function useSaveCreditCardInvoice() {
         const { error: itemsError } = await (supabase as any)
           .from('credit_card_invoice_items')
           .insert(rows);
-        if (itemsError) throw itemsError;
+        if (itemsError) {
+          if (!isMissingCreditCardWorkflowSchema(itemsError)) throw itemsError;
+          const legacyRows = rows.map(({ usage_scope, conversion_status, ...row }) => row);
+          const { error: legacyError } = await (supabase as any)
+            .from('credit_card_invoice_items')
+            .insert(legacyRows);
+          if (legacyError) throw legacyError;
+          toast.warning('Fatura salva no modo básico. Aplique a migration do Cartão para liberar gestão avançada e conversão.');
+        }
       }
 
       return invoice as CreditCardInvoice;
@@ -417,4 +437,25 @@ function normalizeItemUpdates(updates: Record<string, unknown>) {
     next.usage_scope = 'EMPRESA';
   }
   return next;
+}
+
+function normalizeFetchedItems(items: any[]): CreditCardInvoiceItem[] {
+  return items.map(item => ({
+    ...item,
+    usage_scope: item.usage_scope || 'DUVIDA',
+    conversion_status: item.conversion_status || (
+      item.review_status === 'CONVERTIDO' ? 'CONVERTIDO' :
+        item.review_status === 'IGNORADO' ? 'IGNORADO' :
+          'NAO_SELECIONADO'
+    ),
+    cliente_id: item.cliente_id || null,
+    cost_center_id: item.cost_center_id || item.transaction_categories?.cost_center_id || null,
+    transaction_id: item.transaction_id || null,
+    converted_at: item.converted_at || null,
+  })) as CreditCardInvoiceItem[];
+}
+
+function isMissingCreditCardWorkflowSchema(error: any) {
+  const message = `${error?.message || ''} ${error?.details || ''} ${error?.hint || ''}`;
+  return /conversion_status|usage_scope|cliente_id|cost_center_id|converted_at|schema cache/i.test(message);
 }

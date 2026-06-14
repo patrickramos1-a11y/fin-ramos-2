@@ -45,6 +45,7 @@ export function CreditCardInvoicesView() {
   const [month, setMonth] = useState(now.getMonth() + 1);
   const [year, setYear] = useState(now.getFullYear());
   const [selectedInvoiceId, setSelectedInvoiceId] = useState<string | null>(null);
+  const [managerOpen, setManagerOpen] = useState(false);
   const [selectedInvoiceIds, setSelectedInvoiceIds] = useState<Set<string>>(new Set());
   const [editingInvoiceId, setEditingInvoiceId] = useState<string | null>(null);
   const [editingInvoiceName, setEditingInvoiceName] = useState('');
@@ -167,6 +168,7 @@ export function CreditCardInvoicesView() {
       invoiceLabel: invoiceName.trim() || undefined,
     });
     setSelectedInvoiceId(invoice.id);
+    setManagerOpen(true);
     setParsed(null);
     setFileName('');
     setInvoiceName('');
@@ -230,10 +232,21 @@ export function CreditCardInvoicesView() {
         });
         if (selectedInvoiceId === invoice.id) {
           setSelectedInvoiceId(null);
+          setManagerOpen(false);
           setSelectedItems(new Set());
         }
       },
     });
+  };
+
+  const openInvoiceManager = (invoice: CreditCardInvoice) => {
+    setSelectedInvoiceId(invoice.id);
+    setManagerOpen(true);
+    setSelectedItems(new Set());
+    setCardFilter('ALL');
+    setScopeFilter('ALL');
+    setConversionFilter('ALL');
+    setSearch('');
   };
 
   const exportParsedCards = () => {
@@ -461,7 +474,7 @@ export function CreditCardInvoicesView() {
           <CardContent className="space-y-2">
             {invoices.length > 0 && (
               <p className="text-xs text-muted-foreground">
-                Marque uma ou mais faturas para exportar o resumo. Clique no cartão da fatura para abrir a planilha.
+                Marque uma ou mais faturas para exportar o resumo. Use Gerenciar para abrir a planilha detalhada.
               </p>
             )}
             {invoices.length === 0 ? (
@@ -482,10 +495,7 @@ export function CreditCardInvoicesView() {
                       />
                       <button
                         type="button"
-                        onClick={() => {
-                          setSelectedInvoiceId(invoice.id);
-                          setSelectedItems(new Set());
-                        }}
+                        onClick={() => openInvoiceManager(invoice)}
                         className="min-w-0 flex-1 text-left"
                       >
                         <p className="truncate font-semibold">{displayInvoiceName(invoice)}</p>
@@ -518,6 +528,9 @@ export function CreditCardInvoicesView() {
                   <p className="text-xs text-muted-foreground">
                     {invoice.total_transactions} lançamento(s) • {Array.isArray(invoice.selected_cards) ? invoice.selected_cards.length : 0} cartão(ões)
                   </p>
+                  <Button className="mt-3 w-full" variant={managerOpen && active ? 'default' : 'outline'} onClick={() => openInvoiceManager(invoice)}>
+                    Gerenciar fatura
+                  </Button>
                 </div>
               );
             })}
@@ -530,21 +543,34 @@ export function CreditCardInvoicesView() {
               <div>
                 <CardTitle className="flex items-center gap-2 text-lg">
                   <Tags className="h-5 w-5" />
-                  Gestão da fatura
+                  Gerenciamento da fatura
                 </CardTitle>
                 <p className="mt-1 text-sm text-muted-foreground">
-                  {activeInvoice ? displayInvoiceName(activeInvoice) : 'Selecione ou importe uma fatura para começar.'}
+                  {managerOpen && activeInvoice ? displayInvoiceName(activeInvoice) : 'Abra uma fatura salva para revisar cartões e lançamentos.'}
                 </p>
               </div>
-              <div className="grid grid-cols-2 gap-2 text-xs sm:grid-cols-4">
-                <Mini label="Total" value={fmt(invoiceStats.total)} strong />
-                <Mini label="Empresa" value={String(invoiceStats.empresa)} />
-                <Mini label="Pessoal" value={String(invoiceStats.pessoal)} />
-                <Mini label="Prontos" value={String(invoiceStats.prontos)} strong />
-              </div>
+              {managerOpen && activeInvoice && (
+                <div className="grid grid-cols-2 gap-2 text-xs sm:grid-cols-4">
+                  <Mini label="Total" value={fmt(invoiceStats.total)} strong />
+                  <Mini label="Empresa" value={String(invoiceStats.empresa)} />
+                  <Mini label="Pessoal" value={String(invoiceStats.pessoal)} />
+                  <Mini label="Prontos" value={String(invoiceStats.prontos)} strong />
+                </div>
+              )}
             </div>
           </CardHeader>
           <CardContent className="space-y-4">
+            {!managerOpen || !activeInvoice ? (
+              <div className="flex min-h-80 flex-col items-center justify-center rounded-2xl border border-dashed bg-muted/20 p-8 text-center">
+                <CreditCard className="mb-3 h-10 w-10 text-primary" />
+                <p className="text-lg font-semibold">Abra uma fatura para gerenciar</p>
+                <p className="mt-2 max-w-xl text-sm text-muted-foreground">
+                  A lista à esquerda serve para selecionar faturas e exportar resumos. Para revisar cartões separados,
+                  classificar despesas da empresa ou pessoais e preparar transações, clique em Gerenciar fatura.
+                </p>
+              </div>
+            ) : (
+              <>
             {invoiceCards.length > 0 && (
               <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
                 <button
@@ -741,6 +767,8 @@ export function CreditCardInvoicesView() {
                 </tbody>
               </table>
             </div>
+              </>
+            )}
           </CardContent>
         </Card>
       </div>
