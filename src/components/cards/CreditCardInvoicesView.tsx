@@ -389,6 +389,16 @@ export function CreditCardInvoicesView() {
     exportSavedInvoiceRows(activeInvoice, visibleItems);
   };
 
+  const exportSelectedItems = () => {
+    if (!activeInvoice) return;
+    const rows = visibleItems.filter(item => selectedItems.has(item.id));
+    if (rows.length === 0) {
+      toast.error('Selecione pelo menos uma linha da fatura para exportar.');
+      return;
+    }
+    exportSavedInvoiceRows(activeInvoice, rows, `${slugFileName(displayInvoiceName(activeInvoice))}-selecionados`);
+  };
+
   const exportSelectedSavedInvoices = () => {
     const ids = selectedInvoiceIds.size > 0 ? selectedInvoiceIds : new Set(activeInvoice ? [activeInvoice.id] : []);
     const selected = invoices.filter(invoice => ids.has(invoice.id));
@@ -712,7 +722,7 @@ export function CreditCardInvoicesView() {
                 </Button>
                 <Button size="sm" variant="outline" onClick={exportSelectedSavedInvoices} disabled={invoices.length === 0}>
                   <Download className="mr-2 h-4 w-4" />
-                  Exportar
+                  Exportar resumo
                 </Button>
               </div>
             </div>
@@ -720,7 +730,7 @@ export function CreditCardInvoicesView() {
           <CardContent className="space-y-2">
             {invoices.length > 0 && (
               <p className="text-xs text-muted-foreground">
-                Marque uma ou mais faturas para exportar o resumo. Use Gerenciar para abrir a planilha detalhada.
+                Marque uma ou mais faturas para exportar o resumo. Na fatura aberta, exporte a visão atual ou só as linhas selecionadas.
               </p>
             )}
             {invoices.length === 0 ? (
@@ -981,6 +991,10 @@ export function CreditCardInvoicesView() {
                   <Download className="mr-2 h-4 w-4" />
                   Exportar visão atual
                 </Button>
+                <Button variant="outline" onClick={exportSelectedItems} disabled={!activeInvoice || selectedItems.size === 0}>
+                  <Download className="mr-2 h-4 w-4" />
+                  Exportar selecionados
+                </Button>
               </div>
             </div>
 
@@ -1197,7 +1211,7 @@ function summarizeCards(invoice: CreditCardInvoice) {
     .join(', ');
 }
 
-function exportSavedInvoiceRows(invoice: CreditCardInvoice, rows: CreditCardInvoiceItem[]) {
+function exportSavedInvoiceRows(invoice: CreditCardInvoice, rows: CreditCardInvoiceItem[], fileName?: string) {
   exportRowsToExcel(
     rows.map(item => ({
       'Fatura': displayInvoiceName(invoice),
@@ -1224,7 +1238,7 @@ function exportSavedInvoiceRows(invoice: CreditCardInvoice, rows: CreditCardInvo
       'Valor': Number(item.amount) || 0,
       'Observações': item.notes || '',
     })),
-    slugFileName(displayInvoiceName(invoice)),
+    fileName || slugFileName(displayInvoiceName(invoice)),
   );
 }
 

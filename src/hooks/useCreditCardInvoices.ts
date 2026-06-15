@@ -294,12 +294,25 @@ export function useBulkUpdateCreditCardItems() {
 
   return useMutation({
     mutationFn: async ({ ids, updates }: { ids: string[]; updates: Record<string, unknown> }) => {
+      const normalizedUpdates = normalizeItemUpdates({ ...updates, review_status: 'REVISADO' });
       const { data, error } = await (supabase as any)
         .from('credit_card_invoice_items')
-        .update(normalizeItemUpdates({ ...updates, review_status: 'REVISADO' }))
+        .update(normalizedUpdates)
         .in('id', ids)
         .select('invoice_id');
-      if (error) throw error;
+      if (error) {
+        if (!isMissingCreditCardWorkflowSchema(error)) throw error;
+
+        const legacyUpdates = normalizeLegacyItemUpdates(normalizedUpdates);
+        const { data: legacyData, error: legacyError } = await (supabase as any)
+          .from('credit_card_invoice_items')
+          .update(legacyUpdates)
+          .in('id', ids)
+          .select('invoice_id');
+        if (legacyError) throw legacyError;
+        toast.warning('Atualização salva no modo básico. Aplique a migration do Cartão para liberar Empresa/Pessoal, Pronto e conversão completa.');
+        return legacyData as Array<{ invoice_id: string }>;
+      }
       return data as Array<{ invoice_id: string }>;
     },
     onSuccess: async (rows) => {
@@ -446,6 +459,24 @@ function normalizeItemUpdates(updates: Record<string, unknown>) {
   if (next.conversion_status === 'PRONTO') {
     next.usage_scope = 'EMPRESA';
   }
+  return next;
+}
+
+function normalizeLegacyItemUpdates(updates: Record<string, unknown>) {
+  const next = { ...updates };
+  delete next.usage_scope;
+  delete next.conversion_status;
+  delete next.cliente_id;
+  delete next.cost_center_id;
+  delete next.transaction_id;
+  delete next.converted_at;
+
+  if (updates.usage_scope === 'PESSOAL' || updates.conversion_status === 'IGNORADO') {
+    next.review_status = 'IGNORADO';
+  } else if (updates.conversion_status === 'PRONTO') {
+    next.review_status = 'REVISADO';
+  }
+
   return next;
 }
 
