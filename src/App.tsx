@@ -7,6 +7,7 @@ import { AuthProvider } from "@/hooks/useAuth";
 import Index from "./pages/Index";
 import Login from "./pages/Login";
 import NotFound from "./pages/NotFound";
+import ContractAcceptance from "./pages/ContractAcceptance";
 
 const queryClient = new QueryClient();
 
@@ -20,6 +21,7 @@ const App = () => (
           <Routes>
             <Route path="/" element={<Index />} />
             <Route path="/login" element={<Login />} />
+            <Route path="/contrato/aceite/:token" element={<ContractAcceptance />} />
             <Route path="*" element={<NotFound />} />
           </Routes>
         </BrowserRouter>

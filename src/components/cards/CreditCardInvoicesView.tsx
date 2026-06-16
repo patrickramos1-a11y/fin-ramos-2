@@ -13,7 +13,6 @@ import {
   Trash2,
   Layers3,
   ArrowRightCircle,
-  ChevronLeft,
   ChevronRight,
   ArrowUp,
   ArrowDown,
@@ -21,6 +20,8 @@ import {
   Wand2,
   Eye,
   BookmarkPlus,
+  ChevronDown,
+  ChevronUp,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -28,6 +29,7 @@ import { Badge } from '@/components/ui/badge';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Input } from '@/components/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { toast } from 'sonner';
 import {
   parseCreditCardStatementFile,
@@ -39,11 +41,14 @@ import {
   useConvertCreditCardItemsToTransactions,
   useCreditCardInvoiceItems,
   useCreditCardInvoices,
+  useCreditCardMerchantRules,
   useDeleteCreditCardInvoice,
   useSaveCreditCardInvoice,
   useUpdateCreditCardInvoice,
+  useUpsertCreditCardMerchantRules,
   type CreditCardInvoice,
   type CreditCardInvoiceItem,
+  type CreditCardMerchantRule,
 } from '@/hooks/useCreditCardInvoices';
 import { useTransactionCategories } from '@/hooks/useFinancialConfig';
 import { useClients } from '@/hooks/useTransactions';
@@ -55,7 +60,6 @@ const months = [
 ];
 
 const fmt = (value: number) => value.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
-const MERCHANT_RULES_STORAGE_KEY = 'fin-ramos-credit-card-merchant-rules-v1';
 
 type SortKey = 'date' | 'description' | 'card' | 'scope' | 'category' | 'client' | 'amount' | 'conversion';
 type SortDirection = 'asc' | 'desc';
@@ -64,6 +68,7 @@ type MerchantRule = {
   merchantKey: string;
   label: string;
   categoryId: string;
+  usageScope: 'EMPRESA' | 'PESSOAL' | 'DUVIDA';
   updatedAt: string;
 };
 
@@ -88,7 +93,10 @@ export function CreditCardInvoicesView() {
   const [conversionFilter, setConversionFilter] = useState('ALL');
   const [groupByMerchant, setGroupByMerchant] = useState(false);
   const [workflowStep, setWorkflowStep] = useState<WorkflowStep>('manage');
-  const [merchantRules, setMerchantRules] = useState<MerchantRule[]>([]);
+  const [collapsedMerchantGroups, setCollapsedMerchantGroups] = useState<Set<string>>(new Set());
+  const [merchantRuleDialogItem, setMerchantRuleDialogItem] = useState<CreditCardInvoiceItem | null>(null);
+  const [merchantRuleCategoryId, setMerchantRuleCategoryId] = useState('');
+  const [merchantRuleScope, setMerchantRuleScope] = useState<'EMPRESA' | 'PESSOAL' | 'DUVIDA'>('EMPRESA');
   const [sortKey, setSortKey] = useState<SortKey>('date');
   const [sortDirection, setSortDirection] = useState<SortDirection>('asc');
   const [bulkCategoryId, setBulkCategoryId] = useState('');
@@ -97,15 +105,7 @@ export function CreditCardInvoicesView() {
 
   const { data: invoices = [] } = useCreditCardInvoices();
   const { data: items = [], isLoading: itemsLoading } = useCreditCardInvoiceItems(selectedInvoiceId);
-
-  useEffect(() => {
-    try {
-      const raw = window.localStorage.getItem(MERCHANT_RULES_STORAGE_KEY);
-      if (raw) setMerchantRules(JSON.parse(raw));
-    } catch (error) {
-      console.warn('Erro ao carregar regras de estabelecimento do cartão', error);
-    }
-  }, []);
+  const { data: savedMerchantRules = [] } = useCreditCardMerchantRules();
 
   useEffect(() => {
     if (!selectedInvoiceId && invoices.length > 0) {
@@ -119,6 +119,7 @@ export function CreditCardInvoicesView() {
   const deleteInvoice = useDeleteCreditCardInvoice();
   const bulkUpdate = useBulkUpdateCreditCardItems();
   const convertItems = useConvertCreditCardItemsToTransactions();
+  const upsertMerchantRules = useUpsertCreditCardMerchantRules();
 
   const selectedParsedCards = useMemo<CreditCardStatementCard[]>(
     () => parsed ? parsed.cards.filter(card => selectedCards.has(card.id)) : [],
@@ -129,6 +130,16 @@ export function CreditCardInvoicesView() {
   const totalTx = selectedParsedCards.reduce((sum, card) => sum + card.transactions.length, 0);
   const ramosClient = useMemo(() => findRamosClient(clients as any[]), [clients]);
   const categoryById = useMemo(() => new Map((categories as any[]).map(category => [category.id, category])), [categories]);
+  const merchantRules = useMemo<MerchantRule[]>(
+    () => (savedMerchantRules as CreditCardMerchantRule[]).map(rule => ({
+      merchantKey: rule.merchant_key,
+      label: rule.merchant_label,
+      categoryId: rule.transaction_category_id,
+      usageScope: rule.usage_scope,
+      updatedAt: rule.updated_at,
+    })),
+    [savedMerchantRules],
+  );
   const merchantRuleByKey = useMemo(
     () => new Map(merchantRules.map(rule => [rule.merchantKey, rule])),
     [merchantRules],
@@ -149,6 +160,9 @@ export function CreditCardInvoicesView() {
 
   const invoiceStats = useMemo(() => {
     const total = items.reduce((sum, item) => sum + (Number(item.amount) || 0), 0);
+    const reimbursementPending = items
+      .filter(item => item.reimbursement_status === 'PENDENTE')
+      .reduce((sum, item) => sum + (Number(item.amount) || 0), 0);
     return {
       total,
       empresa: items.filter(item => item.usage_scope === 'EMPRESA').length,
@@ -157,6 +171,7 @@ export function CreditCardInvoicesView() {
       prontos: items.filter(isReadyToConvert).length,
       convertidos: items.filter(item => item.conversion_status === 'CONVERTIDO').length,
       pendentes: items.filter(item => item.conversion_status !== 'CONVERTIDO' && item.conversion_status !== 'IGNORADO').length,
+      reimbursementPending,
     };
   }, [items]);
 
@@ -207,6 +222,8 @@ export function CreditCardInvoicesView() {
     [visibleItems],
   );
   const previewGroups = useMemo(() => groupItemsByCard(previewItems), [previewItems]);
+  const previewCategorySummary = useMemo(() => groupItemsByCategory(previewItems), [previewItems]);
+  const categorySummary = useMemo(() => groupItemsByCategory(visibleItems), [visibleItems]);
 
   const handleFile = async (file: File) => {
     try {
@@ -282,6 +299,15 @@ export function CreditCardInvoicesView() {
         if (allSelected) next.delete(item.id);
         else next.add(item.id);
       });
+      return next;
+    });
+  };
+
+  const toggleMerchantGroupCollapse = (key: string) => {
+    setCollapsedMerchantGroups(prev => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
       return next;
     });
   };
@@ -454,11 +480,6 @@ export function CreditCardInvoicesView() {
     });
   };
 
-  const persistMerchantRules = (rules: MerchantRule[]) => {
-    setMerchantRules(rules);
-    window.localStorage.setItem(MERCHANT_RULES_STORAGE_KEY, JSON.stringify(rules));
-  };
-
   const saveMerchantPatternFromSelection = () => {
     if (selectedItems.size === 0) {
       toast.error('Selecione uma ou mais compras para salvar o padrão do estabelecimento.');
@@ -470,21 +491,17 @@ export function CreditCardInvoicesView() {
     }
 
     const selectedRows = items.filter(item => selectedItems.has(item.id));
-    const nextByKey = new Map(merchantRules.map(rule => [rule.merchantKey, rule]));
-    selectedRows.forEach(item => {
-      nextByKey.set(merchantKey(item), {
-        merchantKey: merchantKey(item),
-        label: merchantLabel(item),
-        categoryId: bulkCategoryId,
-        updatedAt: new Date().toISOString(),
-      });
-    });
-    persistMerchantRules(Array.from(nextByKey.values()).sort((a, b) => a.label.localeCompare(b.label)));
+    upsertMerchantRules.mutate(selectedRows.map(item => ({
+      merchant_key: merchantKey(item),
+      merchant_label: merchantLabel(item),
+      transaction_category_id: bulkCategoryId,
+      usage_scope: (bulkScope as 'EMPRESA' | 'PESSOAL' | 'DUVIDA') || 'EMPRESA',
+    })));
 
     const updates = {
       ...buildCategoryUpdates(bulkCategoryId, categoryById, ramosClient),
-      usage_scope: 'EMPRESA',
-      conversion_status: 'PRONTO',
+      usage_scope: bulkScope || 'EMPRESA',
+      conversion_status: bulkScope === 'PESSOAL' ? 'IGNORADO' : 'PRONTO',
     };
     bulkUpdate.mutate({
       ids: selectedRows.map(item => item.id),
@@ -506,22 +523,22 @@ export function CreditCardInvoicesView() {
       return;
     }
 
-    const groups = new Map<string, CreditCardInvoiceItem[]>();
+    const groups = new Map<string, { rule: MerchantRule; items: CreditCardInvoiceItem[] }>();
     suggestedItems.forEach(item => {
       const rule = merchantRuleByKey.get(merchantKey(item));
       if (!rule?.categoryId) return;
-      const current = groups.get(rule.categoryId) || [];
-      current.push(item);
+      const current = groups.get(rule.categoryId) || { rule, items: [] };
+      current.items.push(item);
       groups.set(rule.categoryId, current);
     });
 
     try {
-      await Promise.all(Array.from(groups.entries()).map(([categoryId, groupItems]) => bulkUpdate.mutateAsync({
-        ids: groupItems.map(item => item.id),
+      await Promise.all(Array.from(groups.entries()).map(([categoryId, group]) => bulkUpdate.mutateAsync({
+        ids: group.items.map(item => item.id),
         updates: {
           ...buildCategoryUpdates(categoryId, categoryById, ramosClient),
-          usage_scope: 'EMPRESA',
-          conversion_status: 'PRONTO',
+          usage_scope: group.rule.usageScope,
+          conversion_status: group.rule.usageScope === 'PESSOAL' ? 'IGNORADO' : group.rule.usageScope === 'EMPRESA' ? 'PRONTO' : 'NAO_SELECIONADO',
         },
       })));
       setSelectedItems(new Set());
@@ -529,6 +546,38 @@ export function CreditCardInvoicesView() {
     } catch (error: any) {
       toast.error('Erro ao aplicar padrões: ' + (error?.message || ''));
     }
+  };
+
+  const openMerchantRuleDialog = (item: CreditCardInvoiceItem) => {
+    const rule = merchantRuleByKey.get(merchantKey(item));
+    setMerchantRuleDialogItem(item);
+    setMerchantRuleCategoryId(rule?.categoryId || item.transaction_category_id || '');
+    setMerchantRuleScope(rule?.usageScope || item.usage_scope || 'EMPRESA');
+  };
+
+  const saveMerchantRuleFromDialog = () => {
+    if (!merchantRuleDialogItem || !merchantRuleCategoryId) {
+      toast.error('Escolha uma categoria para salvar o padrão.');
+      return;
+    }
+    upsertMerchantRules.mutate([{
+      merchant_key: merchantKey(merchantRuleDialogItem),
+      merchant_label: merchantLabel(merchantRuleDialogItem),
+      transaction_category_id: merchantRuleCategoryId,
+      usage_scope: merchantRuleScope,
+    }], {
+      onSuccess: () => {
+        bulkUpdate.mutate({
+          ids: [merchantRuleDialogItem.id],
+          updates: {
+            ...buildCategoryUpdates(merchantRuleCategoryId, categoryById, ramosClient),
+            usage_scope: merchantRuleScope,
+            conversion_status: merchantRuleScope === 'PESSOAL' ? 'IGNORADO' : merchantRuleScope === 'EMPRESA' ? 'PRONTO' : 'NAO_SELECIONADO',
+          },
+        });
+        setMerchantRuleDialogItem(null);
+      },
+    });
   };
 
   const convertSelectedItems = () => {
@@ -544,33 +593,38 @@ export function CreditCardInvoicesView() {
     const ruleCategory = rule ? categoryById.get(rule.categoryId) : null;
 
     return (
-      <tr key={item.id} className={selectedItems.has(item.id) ? 'bg-primary/5' : ''}>
-        <td className="p-3"><Checkbox checked={selectedItems.has(item.id)} onCheckedChange={() => toggleItem(item.id)} /></td>
-        <td className="whitespace-nowrap p-3">{item.transaction_date ? new Date(`${item.transaction_date}T00:00:00`).toLocaleDateString('pt-BR') : '-'}</td>
-        <td className="p-3">
+      <tr key={item.id} className={cn('text-xs', selectedItems.has(item.id) && 'bg-primary/5')}>
+        <td className="px-2 py-1.5"><Checkbox checked={selectedItems.has(item.id)} onCheckedChange={() => toggleItem(item.id)} /></td>
+        <td className="whitespace-nowrap px-2 py-1.5">{item.transaction_date ? new Date(`${item.transaction_date}T00:00:00`).toLocaleDateString('pt-BR') : '-'}</td>
+        <td className="px-2 py-1.5">
           <p className="font-medium">{item.description}</p>
           <p className="text-xs text-muted-foreground">{item.installment || merchantLabel(item)}</p>
         </td>
-        <td className="p-3 text-xs">{item.card_name} {item.card_final_digits ? `• ${item.card_final_digits}` : ''}</td>
-        <td className="p-3"><ScopeBadge scope={item.usage_scope} /></td>
-        <td className="p-3">
+        <td className="px-2 py-1.5">{item.card_name} {item.card_final_digits ? `• ${item.card_final_digits}` : ''}</td>
+        <td className="px-2 py-1.5"><ScopeBadge scope={item.usage_scope} /></td>
+        <td className="px-2 py-1.5">
           <Badge variant="secondary">{item.category_hint || 'Outros'}</Badge>
           {ruleCategory && (
             <p className="mt-1 text-[10px] font-medium text-primary">Padrão: {ruleCategory.name}</p>
           )}
         </td>
-        <td className="p-3 text-xs">{item.transaction_categories?.name || <span className="text-muted-foreground">não vinculada</span>}</td>
-        <td className="p-3 text-xs">{item.recurring_clients?.name || ramosClient?.name || <span className="text-muted-foreground">Ramos automática</span>}</td>
-        <td className="p-3 text-xs">
+        <td className="px-2 py-1.5">{item.transaction_categories?.name || <span className="text-muted-foreground">não vinculada</span>}</td>
+        <td className="px-2 py-1.5">{item.recurring_clients?.name || ramosClient?.name || <span className="text-muted-foreground">Ramos automática</span>}</td>
+        <td className="px-2 py-1.5">
           <p>{item.accounts?.name || item.transaction_categories?.default_account_id ? (item.accounts?.name || 'Pela categoria') : <span className="text-muted-foreground">sem conta</span>}</p>
           <p className="text-muted-foreground">{item.cost_centers?.name || item.transaction_categories?.cost_center_id ? (item.cost_centers?.name || 'Pela categoria') : 'sem centro'}</p>
         </td>
-        <td className="p-3 text-right font-bold text-expense">{fmt(Number(item.amount) || 0)}</td>
-        <td className="p-3">
+        <td className="px-2 py-1.5 text-right font-bold text-expense">{fmt(Number(item.amount) || 0)}</td>
+        <td className="px-2 py-1.5">
           <div className="space-y-1">
             <ConversionBadge status={item.conversion_status} />
             {item.transaction_id && <p className="text-[10px] text-muted-foreground">Transação criada</p>}
           </div>
+        </td>
+        <td className="px-2 py-1.5 text-right">
+          <Button size="sm" variant="ghost" className="h-7 px-2" onClick={() => openMerchantRuleDialog(item)}>
+            <BookmarkPlus className="h-3.5 w-3.5" />
+          </Button>
         </td>
       </tr>
     );
@@ -648,7 +702,7 @@ export function CreditCardInvoicesView() {
       </Card>
 
       {parsed && (
-        <Card>
+        <Card className="border-primary/10 bg-gradient-to-r from-emerald-50/70 via-white to-white">
           <CardHeader>
             <CardTitle className="text-lg">Cartões detectados</CardTitle>
           </CardHeader>
@@ -693,105 +747,88 @@ export function CreditCardInvoicesView() {
         </Card>
       )}
 
-      <div className={cn('grid gap-4', invoiceSidebarCollapsed ? 'xl:grid-cols-[64px_1fr]' : 'xl:grid-cols-[340px_1fr]')}>
-        <Card className={cn(invoiceSidebarCollapsed && 'overflow-hidden')}>
-          {invoiceSidebarCollapsed ? (
-            <CardContent className="flex h-full min-h-80 flex-col items-center gap-3 p-3">
-              <Button
-                size="icon"
-                variant="outline"
-                title="Mostrar faturas salvas"
-                onClick={() => setInvoiceSidebarCollapsed(false)}
-              >
-                <ChevronRight className="h-4 w-4" />
-              </Button>
-              <div className="flex flex-1 items-center">
-                <p className="-rotate-90 whitespace-nowrap text-xs font-semibold uppercase tracking-[0.18em] text-muted-foreground">
-                  {invoices.length} faturas
+      <div className="space-y-4">
+        <Card>
+          <CardHeader className="pb-3">
+            <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+              <div>
+                <CardTitle className="text-lg">Faturas salvas</CardTitle>
+                <p className="text-xs text-muted-foreground">
+                  Barra horizontal minimizável: selecione faturas, exporte resumos e abra uma fatura para gerenciar a planilha.
                 </p>
               </div>
-            </CardContent>
-          ) : (
-          <>
-          <CardHeader>
-            <div className="flex items-center justify-between gap-2">
-              <CardTitle className="text-lg">Faturas salvas</CardTitle>
-              <div className="flex items-center gap-2">
-                <Button size="icon" variant="ghost" title="Recolher lista de faturas" onClick={() => setInvoiceSidebarCollapsed(true)}>
-                  <ChevronLeft className="h-4 w-4" />
+              <div className="flex flex-wrap gap-2">
+                <Button size="sm" variant="outline" onClick={() => setInvoiceSidebarCollapsed(prev => !prev)}>
+                  {invoiceSidebarCollapsed ? <ChevronDown className="mr-2 h-4 w-4" /> : <ChevronUp className="mr-2 h-4 w-4" />}
+                  {invoiceSidebarCollapsed ? 'Mostrar faturas' : 'Minimizar'}
                 </Button>
                 <Button size="sm" variant="outline" onClick={exportSelectedSavedInvoices} disabled={invoices.length === 0}>
                   <Download className="mr-2 h-4 w-4" />
-                  Exportar resumo
+                  Exportar selecionadas
                 </Button>
               </div>
             </div>
           </CardHeader>
-          <CardContent className="space-y-2">
-            {invoices.length > 0 && (
-              <p className="text-xs text-muted-foreground">
-                Marque uma ou mais faturas para exportar o resumo. Na fatura aberta, exporte a visão atual ou só as linhas selecionadas.
-              </p>
-            )}
-            {invoices.length === 0 ? (
-              <p className="text-sm text-muted-foreground">Nenhuma fatura salva ainda.</p>
-            ) : invoices.map(invoice => {
-              const active = (selectedInvoiceId || activeInvoice?.id) === invoice.id;
-              return (
-                <div
-                  key={invoice.id}
-                  className={cn('w-full rounded-xl border p-3 text-left hover:bg-muted/50', active && 'border-primary bg-primary/5')}
-                >
-                  <div className="flex items-start justify-between gap-2">
-                    <div className="flex min-w-0 flex-1 gap-2">
-                      <Checkbox
-                        checked={selectedInvoiceIds.has(invoice.id)}
-                        onCheckedChange={() => toggleSavedInvoice(invoice.id)}
-                        className="mt-1"
-                      />
-                      <button
-                        type="button"
-                        onClick={() => openInvoiceManager(invoice)}
-                        className="min-w-0 flex-1 text-left"
+          {!invoiceSidebarCollapsed && (
+            <CardContent>
+              {invoices.length === 0 ? (
+                <p className="text-sm text-muted-foreground">Nenhuma fatura salva ainda.</p>
+              ) : (
+                <div className="flex gap-2 overflow-x-auto pb-2">
+                  {invoices.map(invoice => {
+                    const active = (selectedInvoiceId || activeInvoice?.id) === invoice.id;
+                    return (
+                      <div
+                        key={invoice.id}
+                        className={cn('min-w-[220px] rounded-xl border bg-card p-2.5 hover:bg-muted/50', active && 'border-primary bg-primary/5')}
                       >
-                        <p className="truncate font-semibold">{displayInvoiceName(invoice)}</p>
-                        <p className="text-xs text-muted-foreground">{months[invoice.competence_month - 1]}/{invoice.competence_year}</p>
-                      </button>
-                    </div>
-                    <div className="flex items-center gap-1">
-                      <Button size="icon" variant="ghost" className="h-8 w-8" onClick={() => beginEditInvoice(invoice)}>
-                        <Pencil className="h-4 w-4" />
-                      </Button>
-                      <Button size="icon" variant="ghost" className="h-8 w-8 text-destructive" onClick={() => removeInvoice(invoice)} disabled={deleteInvoice.isPending}>
-                        <Trash2 className="h-4 w-4" />
-                      </Button>
-                      <Badge variant="outline">{invoice.status}</Badge>
-                    </div>
-                  </div>
-                  {editingInvoiceId === invoice.id ? (
-                    <div className="mt-3 flex gap-2">
-                      <Input value={editingInvoiceName} onChange={(event) => setEditingInvoiceName(event.target.value)} autoFocus />
-                      <Button size="icon" onClick={saveInvoiceName} disabled={updateInvoice.isPending}>
-                        <Save className="h-4 w-4" />
-                      </Button>
-                    </div>
-                  ) : (
-                    <div className="mt-2">
-                      <p className="text-xs text-muted-foreground truncate">{invoice.file_name || invoice.invoice_label || 'Fatura'}</p>
-                    </div>
-                  )}
-                  <p className="mt-2 text-sm font-bold">{fmt(Number(invoice.total_amount) || 0)}</p>
-                  <p className="text-xs text-muted-foreground">
-                    {invoice.total_transactions} lançamento(s) • {Array.isArray(invoice.selected_cards) ? invoice.selected_cards.length : 0} cartão(ões)
-                  </p>
-                  <Button className="mt-3 w-full" variant={managerOpen && active ? 'default' : 'outline'} onClick={() => openInvoiceManager(invoice)}>
-                    Gerenciar fatura
-                  </Button>
+                        <div className="flex items-start justify-between gap-2">
+                          <Checkbox
+                            checked={selectedInvoiceIds.has(invoice.id)}
+                            onCheckedChange={() => toggleSavedInvoice(invoice.id)}
+                            className="mt-1"
+                          />
+                          <div className="flex flex-1 items-start justify-between gap-1">
+                            <button type="button" onClick={() => openInvoiceManager(invoice)} className="min-w-0 flex-1 text-left">
+                              <p className="truncate font-semibold">{displayInvoiceName(invoice)}</p>
+                              <p className="text-xs text-muted-foreground">{months[invoice.competence_month - 1]}/{invoice.competence_year}</p>
+                            </button>
+                            <Button size="icon" variant="ghost" className="h-7 w-7" onClick={() => beginEditInvoice(invoice)}>
+                              <Pencil className="h-3.5 w-3.5" />
+                            </Button>
+                            <Button size="icon" variant="ghost" className="h-7 w-7 text-destructive" onClick={() => removeInvoice(invoice)} disabled={deleteInvoice.isPending}>
+                              <Trash2 className="h-3.5 w-3.5" />
+                            </Button>
+                          </div>
+                        </div>
+                        {editingInvoiceId === invoice.id ? (
+                          <div className="mt-2 flex gap-2">
+                            <Input value={editingInvoiceName} onChange={(event) => setEditingInvoiceName(event.target.value)} autoFocus className="h-8" />
+                            <Button size="icon" className="h-8 w-8" onClick={saveInvoiceName} disabled={updateInvoice.isPending}>
+                              <Save className="h-4 w-4" />
+                            </Button>
+                          </div>
+                        ) : (
+                          <p className="mt-2 truncate text-xs text-muted-foreground">{invoice.file_name || invoice.invoice_label || 'Fatura'}</p>
+                        )}
+                        <div className="mt-2 flex items-end justify-between gap-2">
+                          <div>
+                            <p className="text-sm font-bold">{fmt(Number(invoice.total_amount) || 0)}</p>
+                            <p className="text-xs text-muted-foreground">
+                              {invoice.total_transactions} lanç. • {Array.isArray(invoice.selected_cards) ? invoice.selected_cards.length : 0} cartões
+                            </p>
+                          </div>
+                          <Badge variant="outline">{invoice.status}</Badge>
+                        </div>
+                        <Button className="mt-2 w-full" size="sm" variant={managerOpen && active ? 'default' : 'outline'} onClick={() => openInvoiceManager(invoice)}>
+                          Gerenciar
+                        </Button>
+                      </div>
+                    );
+                  })}
                 </div>
-              );
-            })}
-          </CardContent>
-          </>
+              )}
+            </CardContent>
           )}
         </Card>
 
@@ -808,11 +845,12 @@ export function CreditCardInvoicesView() {
                 </p>
               </div>
               {managerOpen && activeInvoice && (
-                <div className="grid grid-cols-2 gap-2 text-xs sm:grid-cols-4">
+                <div className="grid grid-cols-2 gap-2 text-xs sm:grid-cols-5">
                   <Mini label="Total" value={fmt(invoiceStats.total)} strong />
                   <Mini label="Empresa" value={String(invoiceStats.empresa)} />
                   <Mini label="Pessoal" value={String(invoiceStats.pessoal)} />
                   <Mini label="Prontos" value={String(invoiceStats.prontos)} strong />
+                  <Mini label="Reembolso" value={fmt(invoiceStats.reimbursementPending)} strong />
                 </div>
               )}
             </div>
@@ -823,7 +861,7 @@ export function CreditCardInvoicesView() {
                 <CreditCard className="mb-3 h-10 w-10 text-primary" />
                 <p className="text-lg font-semibold">Abra uma fatura para gerenciar</p>
                 <p className="mt-2 max-w-xl text-sm text-muted-foreground">
-                  A lista à esquerda serve para selecionar faturas e exportar resumos. Para revisar cartões separados,
+                  A faixa horizontal acima serve para selecionar faturas e exportar resumos. Para revisar cartões separados,
                   classificar despesas da empresa ou pessoais e preparar transações, clique em Gerenciar fatura.
                 </p>
               </div>
@@ -998,48 +1036,91 @@ export function CreditCardInvoicesView() {
               </div>
             </div>
 
+            {categorySummary.length > 0 && (
+              <div className="rounded-2xl border bg-card p-3">
+                <div className="mb-3 flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
+                  <div>
+                    <p className="font-semibold">Resumo gerencial da fatura</p>
+                    <p className="text-xs text-muted-foreground">
+                      Totais da visão atual para conferir pessoal, empresa e possíveis reembolsos antes da conversão.
+                    </p>
+                  </div>
+                  <Badge variant="outline">{categorySummary.length} grupo(s)</Badge>
+                </div>
+                <div className="grid gap-2 md:grid-cols-2 xl:grid-cols-4">
+                  {categorySummary.slice(0, 8).map(group => (
+                    <div key={group.key} className="rounded-xl border bg-muted/20 p-3">
+                      <p className="truncate text-sm font-semibold">{group.label}</p>
+                      <p className="text-xs text-muted-foreground">{group.count} lançamento(s)</p>
+                      <div className="mt-2 grid grid-cols-2 gap-1 text-[11px]">
+                        <span>Empresa</span>
+                        <span className="text-right font-semibold text-primary">{fmt(group.empresa)}</span>
+                        <span>Pessoal</span>
+                        <span className="text-right font-semibold">{fmt(group.pessoal)}</span>
+                        <span>Reembolso</span>
+                        <span className="text-right font-semibold text-amber-600">{fmt(group.reembolso)}</span>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
             <div className="overflow-auto rounded-xl border">
-              <table className="w-full text-sm">
+              <table className="w-full min-w-[1180px] text-xs">
                 <thead className="bg-muted/60 text-xs">
                   <tr>
-                    <th className="w-10 p-3">
+                    <th className="w-10 px-2 py-2">
                       <Checkbox checked={allVisibleSelected} onCheckedChange={toggleVisibleItems} />
                     </th>
-                    <th className="p-3 text-left"><SortHeader label="Data" sortKey="date" activeKey={sortKey} direction={sortDirection} onSort={changeSort} /></th>
-                    <th className="p-3 text-left"><SortHeader label="Descrição" sortKey="description" activeKey={sortKey} direction={sortDirection} onSort={changeSort} /></th>
-                    <th className="p-3 text-left"><SortHeader label="Cartão" sortKey="card" activeKey={sortKey} direction={sortDirection} onSort={changeSort} /></th>
-                    <th className="p-3 text-left"><SortHeader label="Uso" sortKey="scope" activeKey={sortKey} direction={sortDirection} onSort={changeSort} /></th>
-                    <th className="p-3 text-left">Sugestão</th>
-                    <th className="p-3 text-left"><SortHeader label="Categoria" sortKey="category" activeKey={sortKey} direction={sortDirection} onSort={changeSort} /></th>
-                    <th className="p-3 text-left"><SortHeader label="Cliente" sortKey="client" activeKey={sortKey} direction={sortDirection} onSort={changeSort} /></th>
-                    <th className="p-3 text-left">Conta / C. Custo</th>
-                    <th className="p-3 text-right"><SortHeader label="Valor" sortKey="amount" activeKey={sortKey} direction={sortDirection} onSort={changeSort} align="right" /></th>
-                    <th className="p-3 text-left"><SortHeader label="Conversão" sortKey="conversion" activeKey={sortKey} direction={sortDirection} onSort={changeSort} /></th>
+                    <th className="px-2 py-2 text-left"><SortHeader label="Data" sortKey="date" activeKey={sortKey} direction={sortDirection} onSort={changeSort} /></th>
+                    <th className="px-2 py-2 text-left"><SortHeader label="Descrição" sortKey="description" activeKey={sortKey} direction={sortDirection} onSort={changeSort} /></th>
+                    <th className="px-2 py-2 text-left"><SortHeader label="Cartão" sortKey="card" activeKey={sortKey} direction={sortDirection} onSort={changeSort} /></th>
+                    <th className="px-2 py-2 text-left"><SortHeader label="Uso" sortKey="scope" activeKey={sortKey} direction={sortDirection} onSort={changeSort} /></th>
+                    <th className="px-2 py-2 text-left">Sugestão</th>
+                    <th className="px-2 py-2 text-left"><SortHeader label="Categoria" sortKey="category" activeKey={sortKey} direction={sortDirection} onSort={changeSort} /></th>
+                    <th className="px-2 py-2 text-left"><SortHeader label="Cliente" sortKey="client" activeKey={sortKey} direction={sortDirection} onSort={changeSort} /></th>
+                    <th className="px-2 py-2 text-left">Conta / C. Custo</th>
+                    <th className="px-2 py-2 text-right"><SortHeader label="Valor" sortKey="amount" activeKey={sortKey} direction={sortDirection} onSort={changeSort} align="right" /></th>
+                    <th className="px-2 py-2 text-left"><SortHeader label="Conversão" sortKey="conversion" activeKey={sortKey} direction={sortDirection} onSort={changeSort} /></th>
+                    <th className="px-2 py-2 text-right">Padrão</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y">
                   {itemsLoading ? (
-                    <tr><td colSpan={11} className="p-8 text-center text-muted-foreground">Carregando...</td></tr>
+                    <tr><td colSpan={12} className="p-8 text-center text-muted-foreground">Carregando...</td></tr>
                   ) : visibleItems.length === 0 ? (
-                    <tr><td colSpan={11} className="p-8 text-center text-muted-foreground">Nenhum lançamento para exibir.</td></tr>
+                    <tr><td colSpan={12} className="p-8 text-center text-muted-foreground">Nenhum lançamento para exibir.</td></tr>
                   ) : groupByMerchant ? groupedVisibleItems.map(group => (
                     <Fragment key={group.key}>
                       <tr className="bg-emerald-50/70">
-                        <td className="p-3">
+                        <td className="px-2 py-2">
                           <Checkbox
                             checked={group.items.every(item => selectedItems.has(item.id))}
                             onCheckedChange={() => toggleMerchantGroup(group.items)}
                           />
                         </td>
-                        <td colSpan={7} className="p-3">
-                          <p className="font-semibold">{group.label}</p>
-                          <p className="text-xs text-muted-foreground">{group.items.length} lançamento(s) agrupado(s) por estabelecimento</p>
+                        <td colSpan={7} className="px-2 py-2">
+                          <button type="button" className="flex items-center gap-2 text-left" onClick={() => toggleMerchantGroupCollapse(group.key)}>
+                            {collapsedMerchantGroups.has(group.key) ? <ChevronRight className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
+                            <span>
+                              <span className="block font-semibold">{group.label}</span>
+                              <span className="text-xs text-muted-foreground">
+                                {group.items.length} lançamento(s) • {uniqueCardCount(group.items)} cartão(ões)
+                              </span>
+                            </span>
+                          </button>
                         </td>
-                        <td className="p-3 text-xs text-muted-foreground">{selectedCardSummary}</td>
-                        <td className="p-3 text-right font-bold text-expense">{fmt(group.total)}</td>
-                        <td className="p-3 text-xs text-muted-foreground">Grupo</td>
+                        <td className="px-2 py-2 text-xs text-muted-foreground">{selectedCardSummary}</td>
+                        <td className="px-2 py-2 text-right font-bold text-expense">{fmt(group.total)}</td>
+                        <td className="px-2 py-2 text-xs text-muted-foreground">Grupo</td>
+                        <td className="px-2 py-2 text-right">
+                          <Button size="sm" variant="ghost" className="h-7 px-2" onClick={() => openMerchantRuleDialog(group.items[0])}>
+                            <BookmarkPlus className="h-3.5 w-3.5" />
+                          </Button>
+                        </td>
                       </tr>
-                      {group.items.map(renderInvoiceItemRow)}
+                      {!collapsedMerchantGroups.has(group.key) && group.items.map(renderInvoiceItemRow)}
                     </Fragment>
                   )) : visibleItems.map(renderInvoiceItemRow)}
                 </tbody>
@@ -1049,6 +1130,7 @@ export function CreditCardInvoicesView() {
             ) : (
               <PreviewTransactionsPanel
                 groups={previewGroups}
+                categorySummary={previewCategorySummary}
                 readyItems={readyItems}
                 selectedReadyItems={selectedReadyItems}
                 selectedItems={selectedItems}
@@ -1062,6 +1144,52 @@ export function CreditCardInvoicesView() {
           </CardContent>
         </Card>
       </div>
+
+      <Dialog open={!!merchantRuleDialogItem} onOpenChange={(open) => !open && setMerchantRuleDialogItem(null)}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Configurar padrão do estabelecimento</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4">
+            <div className="rounded-xl border bg-muted/40 p-3">
+              <p className="text-sm font-semibold">{merchantRuleDialogItem ? merchantLabel(merchantRuleDialogItem) : ''}</p>
+              <p className="text-xs text-muted-foreground">
+                Quando esse estabelecimento aparecer novamente, o sistema poderá aplicar a categoria e o uso automaticamente.
+              </p>
+            </div>
+            <div>
+              <p className="mb-2 text-sm font-medium">Categoria padrão</p>
+              <Select value={merchantRuleCategoryId} onValueChange={setMerchantRuleCategoryId}>
+                <SelectTrigger><SelectValue placeholder="Selecionar categoria" /></SelectTrigger>
+                <SelectContent>
+                  {(categories as any[])
+                    .filter(category => category.type === 'SAIDA')
+                    .map(category => (
+                      <SelectItem key={category.id} value={category.id}>{category.name}</SelectItem>
+                    ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div>
+              <p className="mb-2 text-sm font-medium">Uso padrão</p>
+              <Select value={merchantRuleScope} onValueChange={(value) => setMerchantRuleScope(value as 'EMPRESA' | 'PESSOAL' | 'DUVIDA')}>
+                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="EMPRESA">Empresa</SelectItem>
+                  <SelectItem value="PESSOAL">Pessoal</SelectItem>
+                  <SelectItem value="DUVIDA">Dúvida</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="flex justify-end gap-2">
+              <Button variant="outline" onClick={() => setMerchantRuleDialogItem(null)}>Cancelar</Button>
+              <Button onClick={saveMerchantRuleFromDialog} disabled={!merchantRuleCategoryId || upsertMerchantRules.isPending}>
+                Salvar padrão
+              </Button>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
@@ -1097,6 +1225,7 @@ function SortHeader({
 
 function PreviewTransactionsPanel({
   groups,
+  categorySummary,
   readyItems,
   selectedReadyItems,
   selectedItems,
@@ -1105,6 +1234,7 @@ function PreviewTransactionsPanel({
   isConverting,
 }: {
   groups: Array<{ key: string; label: string; total: number; items: CreditCardInvoiceItem[] }>;
+  categorySummary: Array<{ key: string; label: string; total: number; count: number; empresa: number; pessoal: number; reembolso: number }>;
   readyItems: CreditCardInvoiceItem[];
   selectedReadyItems: CreditCardInvoiceItem[];
   selectedItems: Set<string>;
@@ -1145,6 +1275,34 @@ function PreviewTransactionsPanel({
         </div>
       ) : (
         <div className="space-y-3">
+          <div className="rounded-2xl border bg-card p-3">
+            <div className="mb-3 flex items-center justify-between">
+              <div>
+                <p className="font-semibold">Resumo antes de converter</p>
+                <p className="text-xs text-muted-foreground">Totais empresariais por categoria e valor que exige reembolso.</p>
+              </div>
+              <Badge variant="outline">{fmt(categorySummary.reduce((sum, group) => sum + group.reembolso, 0))} em reembolso</Badge>
+            </div>
+            <div className="grid gap-2 md:grid-cols-2 xl:grid-cols-4">
+              {categorySummary.slice(0, 8).map(group => (
+                <div key={group.key} className="rounded-xl bg-muted/30 p-3">
+                  <p className="truncate text-sm font-semibold">{group.label}</p>
+                  <p className="text-xs text-muted-foreground">{group.count} item(ns)</p>
+                  <div className="mt-2 flex items-center justify-between text-xs">
+                    <span>Empresa</span>
+                    <strong className="text-primary">{fmt(group.empresa)}</strong>
+                  </div>
+                  {group.reembolso > 0 && (
+                    <div className="mt-1 flex items-center justify-between text-xs">
+                      <span>Reembolso</span>
+                      <strong className="text-amber-600">{fmt(group.reembolso)}</strong>
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+          </div>
+
           {groups.map(group => (
             <div key={group.key} className="overflow-hidden rounded-2xl border">
               <div className="flex flex-col gap-2 border-b bg-muted/50 p-3 sm:flex-row sm:items-center sm:justify-between">
@@ -1218,6 +1376,7 @@ function exportSavedInvoiceRows(invoice: CreditCardInvoice, rows: CreditCardInvo
       'Competência': `${months[invoice.competence_month - 1]}/${invoice.competence_year}`,
       'Data': item.transaction_date ? new Date(`${item.transaction_date}T00:00:00`).toLocaleDateString('pt-BR') : '',
       'Descrição': item.description,
+      'Estabelecimento Normalizado': merchantLabel(item),
       'Cartão': item.card_name,
       'Final': item.card_final_digits || '',
       'Tipo do cartão': item.card_type || '',
@@ -1234,6 +1393,7 @@ function exportSavedInvoiceRows(invoice: CreditCardInvoice, rows: CreditCardInvo
       'Entidade': item.financial_entities?.name || '',
       'Uso': item.usage_scope,
       'Status de Conversão': item.conversion_status,
+      'Reembolso': item.reimbursement_status || 'NAO_APLICA',
       'Status de Revisão': item.review_status,
       'Valor': Number(item.amount) || 0,
       'Observações': item.notes || '',
@@ -1317,6 +1477,26 @@ function groupItemsByCard(items: CreditCardInvoiceItem[]) {
     map.set(key, current);
   }
   return Array.from(map.values()).sort((a, b) => a.label.localeCompare(b.label));
+}
+
+function groupItemsByCategory(items: CreditCardInvoiceItem[]) {
+  const map = new Map<string, { key: string; label: string; total: number; count: number; empresa: number; pessoal: number; reembolso: number }>();
+  for (const item of items) {
+    const label = item.transaction_categories?.name || item.category_hint || 'Sem categoria';
+    const current = map.get(label) || { key: label, label, total: 0, count: 0, empresa: 0, pessoal: 0, reembolso: 0 };
+    const amount = Number(item.amount) || 0;
+    current.total += amount;
+    current.count += 1;
+    if (item.usage_scope === 'EMPRESA') current.empresa += amount;
+    if (item.usage_scope === 'PESSOAL') current.pessoal += amount;
+    if (item.reimbursement_status === 'PENDENTE') current.reembolso += amount;
+    map.set(label, current);
+  }
+  return Array.from(map.values()).sort((a, b) => b.total - a.total || a.label.localeCompare(b.label));
+}
+
+function uniqueCardCount(items: CreditCardInvoiceItem[]) {
+  return new Set(items.map(cardKey)).size;
 }
 
 function sortItems(items: CreditCardInvoiceItem[], sortKey: SortKey, direction: SortDirection) {

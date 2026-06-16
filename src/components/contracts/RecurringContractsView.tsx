@@ -1,4 +1,4 @@
-import { useState, useMemo } from 'react';
+import { useEffect, useState, useMemo } from 'react';
 import { 
   Users, 
   DollarSign, 
@@ -12,7 +12,8 @@ import {
   Settings2,
   Trash2,
   LayoutGrid,
-  List
+  List,
+  FileText
 } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
@@ -31,6 +32,7 @@ import { cn } from '@/lib/utils';
 import { MinimumWageConfigModal } from './MinimumWageConfigModal';
 import { ConfirmModal } from '@/components/modals/ConfirmModal';
 import { toast } from 'sonner';
+import { ContractDocumentsView } from './ContractDocumentsView';
 
 const MONTHS = ['Jan', 'Fev', 'Mar', 'Abr', 'Mai', 'Jun', 'Jul', 'Ago', 'Set', 'Out', 'Nov', 'Dez'];
 
@@ -40,6 +42,9 @@ interface RecurringContractsViewProps {
 
 export function RecurringContractsView({ activeSection }: RecurringContractsViewProps) {
   const currentYear = new Date().getFullYear();
+  const [contractMode, setContractMode] = useState<'financial' | 'documents'>(
+    activeSection === 'documents' ? 'documents' : 'financial'
+  );
   const [selectedYear, setSelectedYear] = useState(currentYear);
   const [selectedMonth, setSelectedMonth] = useState<number | null>(null);
   const [statusFilter, setStatusFilter] = useState<string | null>(null);
@@ -59,6 +64,10 @@ export function RecurringContractsView({ activeSection }: RecurringContractsView
   const cancelContract = useCancelContract();
 
   const isLoading = loadingKPIs || loadingContracts || loadingInstallments;
+
+  useEffect(() => {
+    setContractMode(activeSection === 'documents' ? 'documents' : 'financial');
+  }, [activeSection]);
 
   // Group contracts by plan
   const contractsByPlan = useMemo(() => {
@@ -152,16 +161,55 @@ export function RecurringContractsView({ activeSection }: RecurringContractsView
     }
   };
 
+  const modeTabs = (
+    <div className="flex flex-wrap gap-2 rounded-2xl bg-muted/60 p-1 w-fit">
+      <button
+        onClick={() => setContractMode('financial')}
+        className={cn(
+          'px-4 py-2 rounded-xl text-sm font-semibold transition-colors flex items-center gap-2',
+          contractMode === 'financial' ? 'bg-card text-foreground shadow-soft' : 'text-muted-foreground hover:text-foreground'
+        )}
+      >
+        <RefreshCw className="w-4 h-4" />
+        Financeiro recorrente
+      </button>
+      <button
+        onClick={() => setContractMode('documents')}
+        className={cn(
+          'px-4 py-2 rounded-xl text-sm font-semibold transition-colors flex items-center gap-2',
+          contractMode === 'documents' ? 'bg-card text-foreground shadow-soft' : 'text-muted-foreground hover:text-foreground'
+        )}
+      >
+        <FileText className="w-4 h-4" />
+        Documentos digitais
+      </button>
+    </div>
+  );
+
+  if (contractMode === 'documents') {
+    return (
+      <div className="space-y-6">
+        {modeTabs}
+        <ContractDocumentsView />
+      </div>
+    );
+  }
+
   if (isLoading) {
     return (
-      <div className="flex items-center justify-center h-64">
-        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary"></div>
+      <div className="space-y-6">
+        {modeTabs}
+        <div className="flex items-center justify-center h-64">
+          <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary"></div>
+        </div>
       </div>
     );
   }
 
   return (
     <div className="space-y-6">
+      {modeTabs}
+
       {/* Header Actions */}
       <div className="flex items-center justify-between flex-wrap gap-2">
         <div className="flex items-center gap-2">

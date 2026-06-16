@@ -155,7 +155,18 @@ export function useGenerateFixedExpenseTransactions() {
         .eq('competencia_ano', year)
         .eq('competencia_mes', month);
 
-      const existingExpenseIds = new Set(existingTransactions?.map(t => t.fixed_expense_id) || []);
+      const { data: rejectedTransactions } = await supabase
+        .from('rejected_transactions')
+        .select('fixed_expense_id')
+        .eq('origem', 'DESPESA_FIXA')
+        .eq('competencia_ano', year)
+        .eq('competencia_mes', month)
+        .not('fixed_expense_id', 'is', null);
+
+      const existingExpenseIds = new Set([
+        ...(existingTransactions?.map(t => t.fixed_expense_id).filter(Boolean) || []),
+        ...(rejectedTransactions?.map(t => t.fixed_expense_id).filter(Boolean) || []),
+      ]);
 
       const orphans: string[] = [];
       const newTransactions = expenses

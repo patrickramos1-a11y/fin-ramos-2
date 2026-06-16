@@ -43,6 +43,7 @@ const tabConfig: Record<string, { title: string; subtitle?: string }> = {
   'open-payments': { title: 'Em Aberto', subtitle: 'Controle de inadimplência' },
   'credit-cards': { title: 'Cartão', subtitle: 'Importação e conferência de faturas' },
   'recurring-contracts': { title: 'Contratos', subtitle: 'Gestão por salário mínimo' },
+  'contract-documents': { title: 'Contratos', subtitle: 'Documentos digitais e aceite por link' },
   reports: { title: 'Relatórios', subtitle: 'Análises e DRE' },
   clients: { title: 'Clientes', subtitle: 'Gerencie sua carteira' },
   entities: { title: 'Entidades', subtitle: 'Pessoas, fornecedores e grupos' },
@@ -142,6 +143,7 @@ function GatedContent({ activeTab, setDetailAccountId }: { activeTab: string; se
     case 'open-payments': return <OpenPaymentsView />;
     case 'credit-cards': return <CreditCardInvoicesView />;
     case 'recurring-contracts': return <RecurringContractsView />;
+    case 'contract-documents': return <RecurringContractsView activeSection="documents" />;
     case 'reports': return <ReportsView />;
     case 'clients': return <ClientsView />;
     case 'entities': return <EntitiesView />;

@@ -49,6 +49,8 @@ export type CreditCardInvoiceItem = {
         review_status: 'PENDENTE' | 'REVISADO' | 'IGNORADO' | 'CONVERTIDO';
   usage_scope?: 'EMPRESA' | 'PESSOAL' | 'DUVIDA';
   conversion_status?: 'NAO_SELECIONADO' | 'PRONTO' | 'CONVERTIDO' | 'IGNORADO';
+  reimbursement_status?: 'NAO_APLICA' | 'PENDENTE' | 'REEMBOLSADO';
+  reimbursement_notes?: string | null;
   transaction_id: string | null;
   converted_at: string | null;
   transaction_categories?: { id?: string; name: string; color?: string | null; default_account_id?: string | null; cost_center_id?: string | null } | null;
@@ -56,6 +58,18 @@ export type CreditCardInvoiceItem = {
   recurring_clients?: { id: string; name: string } | null;
   cost_centers?: { id: string; name: string } | null;
   financial_entities?: { id: string; name: string } | null;
+};
+
+export type CreditCardMerchantRule = {
+  id: string;
+  merchant_key: string;
+  merchant_label: string;
+  transaction_category_id: string;
+  usage_scope: 'EMPRESA' | 'PESSOAL' | 'DUVIDA';
+  active: boolean;
+  created_at: string;
+  updated_at: string;
+  transaction_categories?: { id?: string; name: string; color?: string | null; default_account_id?: string | null; cost_center_id?: string | null } | null;
 };
 
 export function useCreditCardInvoices() {
@@ -70,6 +84,60 @@ export function useCreditCardInvoices() {
         .order('created_at', { ascending: false });
       if (error) throw error;
       return (data || []) as CreditCardInvoice[];
+    },
+  });
+}
+
+export function useCreditCardMerchantRules() {
+  return useQuery({
+    queryKey: ['credit-card-merchant-rules'],
+    queryFn: async () => {
+      const { data, error } = await (supabase as any)
+        .from('credit_card_merchant_rules')
+        .select(`
+          *,
+          transaction_categories:transaction_category_id(id, name, color, default_account_id, cost_center_id)
+        `)
+        .eq('active', true)
+        .order('merchant_label', { ascending: true });
+      if (error) {
+        if (isMissingMerchantRulesSchema(error)) return [] as CreditCardMerchantRule[];
+        throw error;
+      }
+      return (data || []) as CreditCardMerchantRule[];
+    },
+  });
+}
+
+export function useUpsertCreditCardMerchantRules() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: async (rules: Array<{
+      merchant_key: string;
+      merchant_label: string;
+      transaction_category_id: string;
+      usage_scope: 'EMPRESA' | 'PESSOAL' | 'DUVIDA';
+    }>) => {
+      const rows = rules.map(rule => ({ ...rule, active: true }));
+      const { data, error } = await (supabase as any)
+        .from('credit_card_merchant_rules')
+        .upsert(rows, { onConflict: 'merchant_key' })
+        .select('*');
+      if (error) {
+        if (isMissingMerchantRulesSchema(error)) {
+          throw new Error('A tabela de padrões do cartão ainda não existe no Supabase. Aplique a migration credit_card_rules_reimbursement.');
+        }
+        throw error;
+      }
+      return (data || []) as CreditCardMerchantRule[];
+    },
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ['credit-card-merchant-rules'] });
+      toast.success('Padrão de estabelecimento salvo.');
+    },
+    onError: (error: any) => {
+      toast.error('Erro ao salvar padrão: ' + (error?.message || ''));
     },
   });
 }
@@ -394,8 +462,9 @@ export function useConvertCreditCardItemsToTransactions() {
           cost_center_id: costCenterId,
           documento_tipo: 'SEM_DOCUMENTO',
           notes: [
-            `Importado da fatura de cartão: ${invoice.invoice_label || invoice.file_name || 'Fatura'}`,
-            `Cartão: ${item.card_name}${item.card_final_digits ? ` final ${item.card_final_digits}` : ''}`,
+          `Importado da fatura de cartão: ${invoice.invoice_label || invoice.file_name || 'Fatura'}`,
+          `Cartão: ${item.card_name}${item.card_final_digits ? ` final ${item.card_final_digits}` : ''}`,
+            isPersonalCard(item) ? 'Reembolso pendente: gasto empresarial em cartão pessoal.' : null,
             item.installment ? `Parcela: ${item.installment}` : null,
           ].filter(Boolean).join('\n'),
           entity_id: item.entity_id,
@@ -419,6 +488,10 @@ export function useConvertCreditCardItemsToTransactions() {
             transaction_id: transactionId,
             conversion_status: 'CONVERTIDO',
             review_status: 'CONVERTIDO',
+            reimbursement_status: isPersonalCard(rows[index]) ? 'PENDENTE' : 'NAO_APLICA',
+            reimbursement_notes: isPersonalCard(rows[index])
+              ? 'Despesa empresarial importada de cartão pessoal. Controlar reembolso ao titular.'
+              : null,
             converted_at: new Date().toISOString(),
           })
           .eq('id', rows[index].id);
@@ -470,6 +543,8 @@ function normalizeLegacyItemUpdates(updates: Record<string, unknown>) {
   delete next.cost_center_id;
   delete next.transaction_id;
   delete next.converted_at;
+  delete next.reimbursement_status;
+  delete next.reimbursement_notes;
 
   if (updates.usage_scope === 'PESSOAL' || updates.conversion_status === 'IGNORADO') {
     next.review_status = 'IGNORADO';
@@ -493,10 +568,22 @@ function normalizeFetchedItems(items: any[]): CreditCardInvoiceItem[] {
     cost_center_id: item.cost_center_id || item.transaction_categories?.cost_center_id || null,
     transaction_id: item.transaction_id || null,
     converted_at: item.converted_at || null,
+    reimbursement_status: item.reimbursement_status || 'NAO_APLICA',
+    reimbursement_notes: item.reimbursement_notes || null,
   })) as CreditCardInvoiceItem[];
 }
 
 function isMissingCreditCardWorkflowSchema(error: any) {
   const message = `${error?.message || ''} ${error?.details || ''} ${error?.hint || ''}`;
-  return /conversion_status|usage_scope|cliente_id|cost_center_id|converted_at|schema cache/i.test(message);
+  return /conversion_status|usage_scope|cliente_id|cost_center_id|converted_at|reimbursement_status|reimbursement_notes|schema cache/i.test(message);
+}
+
+function isMissingMerchantRulesSchema(error: any) {
+  const message = `${error?.message || ''} ${error?.details || ''} ${error?.hint || ''}`;
+  return /credit_card_merchant_rules|schema cache/i.test(message);
+}
+
+function isPersonalCard(item: CreditCardInvoiceItem) {
+  const label = `${item.card_name || ''} ${item.card_type || ''}`.toLowerCase();
+  return !/empresa|ramos engenharia|corporativo|pj/.test(label);
 }

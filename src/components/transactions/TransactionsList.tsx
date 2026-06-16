@@ -536,7 +536,12 @@ export function TransactionsList({ filters, bulkContext = 'GERAL' }: Transaction
 
     try {
       if (mode === 'single') {
-        await deleteMutation.mutateAsync(tx.id);
+        const { error } = await supabase.rpc('archive_and_delete_rejected', {
+          p_ids: [tx.id],
+          p_reason: 'Parcela excluída manualmente; bloquear recriação automática',
+          p_rejected_by: null,
+        });
+        if (error) throw error;
       }
 
       if (mode === 'future') {
@@ -573,7 +578,7 @@ export function TransactionsList({ filters, bulkContext = 'GERAL' }: Transaction
       await refreshAfterDelete();
       toast.success(
         mode === 'single'
-          ? 'Parcela excluída. Atenção: a despesa fixa continua ativa.'
+          ? 'Parcela excluída e bloqueada para não ser recriada automaticamente.'
           : mode === 'future'
           ? 'Despesa fixa encerrada a partir desta competência.'
           : 'Despesa fixa desativada e parcelas em aberto removidas.'

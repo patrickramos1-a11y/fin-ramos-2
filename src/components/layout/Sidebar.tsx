@@ -73,7 +73,13 @@ const menuSections: MenuSection[] = [
       { id: 'open-payments', label: 'Em Aberto', icon: AlertCircle, badge: 'critical' },
       { id: 'credit-cards', label: 'Cartão', icon: CreditCard },
       { id: 'approval', label: 'Aprovações', icon: ShieldCheck, badge: 'approval' },
-      { id: 'recurring-contracts', label: 'Contratos', icon: RefreshCw },
+      {
+        id: 'recurring-contracts', label: 'Contratos', icon: RefreshCw,
+        subItems: [
+          { id: 'recurring-contracts', label: 'Financeiro Recorrente', icon: RefreshCw },
+          { id: 'contract-documents', label: 'Documentos Digitais', icon: FileText },
+        ],
+      },
       { id: 'reclassification', label: 'Reclassificação', icon: FileText },
     ],
   },

@@ -60,6 +60,7 @@ const SUB_TO_PARENT: Record<string, ModuleKey> = {
   'entradas-avulsas': 'transactions',
   'despesas-fixas': 'transactions',
   'despesas-variaveis': 'transactions',
+  'contract-documents': 'recurring-contracts',
 };
 
 export function resolveModuleKey(tab: string): ModuleKey {
