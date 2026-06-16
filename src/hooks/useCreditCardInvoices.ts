@@ -72,6 +72,20 @@ export type CreditCardMerchantRule = {
   transaction_categories?: { id?: string; name: string; color?: string | null; default_account_id?: string | null; cost_center_id?: string | null } | null;
 };
 
+export type CreditCardProfile = {
+  id: string;
+  card_key: string;
+  card_name: string;
+  card_final_digits: string | null;
+  card_type: string | null;
+  owner_name: string | null;
+  usage_scope: 'EMPRESA' | 'PESSOAL' | 'DUVIDA';
+  color: string;
+  active: boolean;
+  created_at: string;
+  updated_at: string;
+};
+
 export function useCreditCardInvoices() {
   return useQuery({
     queryKey: ['credit-card-invoices'],
@@ -84,6 +98,65 @@ export function useCreditCardInvoices() {
         .order('created_at', { ascending: false });
       if (error) throw error;
       return (data || []) as CreditCardInvoice[];
+    },
+  });
+}
+
+export function useCreditCardProfiles() {
+  return useQuery({
+    queryKey: ['credit-card-profiles'],
+    queryFn: async () => {
+      const { data, error } = await (supabase as any)
+        .from('credit_card_profiles')
+        .select('*')
+        .eq('active', true)
+        .order('card_name', { ascending: true });
+      if (error) {
+        if (isMissingCardProfilesSchema(error)) return [] as CreditCardProfile[];
+        throw error;
+      }
+      return (data || []) as CreditCardProfile[];
+    },
+  });
+}
+
+export function useUpsertCreditCardProfile() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: async (profile: {
+      card_name: string;
+      card_final_digits?: string | null;
+      card_type?: string | null;
+      owner_name?: string | null;
+      usage_scope: 'EMPRESA' | 'PESSOAL' | 'DUVIDA';
+      color?: string;
+    }) => {
+      const row = {
+        ...profile,
+        card_key: buildCreditCardProfileKey(profile.card_name, profile.card_final_digits || null),
+        color: profile.color || (profile.usage_scope === 'PESSOAL' ? '#f59e0b' : profile.usage_scope === 'EMPRESA' ? '#10b981' : '#64748b'),
+        active: true,
+      };
+      const { data, error } = await (supabase as any)
+        .from('credit_card_profiles')
+        .upsert(row, { onConflict: 'card_key' })
+        .select('*')
+        .single();
+      if (error) {
+        if (isMissingCardProfilesSchema(error)) {
+          throw new Error('A tabela de configuração de cartões ainda não existe no Supabase. Aplique a migration credit_card_profiles_personal_company.');
+        }
+        throw error;
+      }
+      return data as CreditCardProfile;
+    },
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ['credit-card-profiles'] });
+      toast.success('Perfil do cartão salvo.');
+    },
+    onError: (error: any) => {
+      toast.error('Erro ao salvar perfil do cartão: ' + (error?.message || ''));
     },
   });
 }
@@ -226,6 +299,14 @@ export function useSaveCreditCardInvoice() {
 
       if (invoiceError) throw invoiceError;
 
+      const { data: cardProfiles } = await (supabase as any)
+        .from('credit_card_profiles')
+        .select('*')
+        .eq('active', true);
+      const profileByCard = new Map(
+        ((cardProfiles || []) as CreditCardProfile[]).map(profile => [profile.card_key, profile]),
+      );
+
       const rows = selectedCards.flatMap(card => card.transactions.map(tx => ({
         invoice_id: invoice.id,
         card_name: card.name,
@@ -242,8 +323,10 @@ export function useSaveCreditCardInvoice() {
         amount: tx.value,
         category_hint: tx.categoryHint || null,
         review_status: 'PENDENTE',
-        usage_scope: 'DUVIDA',
-        conversion_status: 'NAO_SELECIONADO',
+        usage_scope: profileByCard.get(buildCreditCardProfileKey(card.name, card.finalDigits))?.usage_scope || 'DUVIDA',
+        conversion_status: profileByCard.get(buildCreditCardProfileKey(card.name, card.finalDigits))?.usage_scope === 'PESSOAL'
+          ? 'IGNORADO'
+          : 'NAO_SELECIONADO',
       })));
 
       if (rows.length > 0) {
@@ -583,7 +666,15 @@ function isMissingMerchantRulesSchema(error: any) {
   return /credit_card_merchant_rules|schema cache/i.test(message);
 }
 
+function isMissingCardProfilesSchema(error: any) {
+  const message = `${error?.message || ''} ${error?.details || ''} ${error?.hint || ''}`;
+  return /credit_card_profiles|schema cache/i.test(message);
+}
+
+export function buildCreditCardProfileKey(cardName: string, finalDigits?: string | null) {
+  return `${normalizeCardDescription(cardName || 'cartao')}::${finalDigits || 'sem-final'}`;
+}
+
 function isPersonalCard(item: CreditCardInvoiceItem) {
-  const label = `${item.card_name || ''} ${item.card_type || ''}`.toLowerCase();
-  return !/empresa|ramos engenharia|corporativo|pj/.test(label);
+  return item.usage_scope === 'EMPRESA' && /pessoal|titular|patrick|zenilda|gabi|darley/i.test(`${item.card_name || ''} ${item.card_type || ''}`);
 }

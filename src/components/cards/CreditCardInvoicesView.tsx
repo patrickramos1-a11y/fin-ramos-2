@@ -39,16 +39,20 @@ import {
 import {
   useBulkUpdateCreditCardItems,
   useConvertCreditCardItemsToTransactions,
+  useCreditCardProfiles,
   useCreditCardInvoiceItems,
   useCreditCardInvoices,
   useCreditCardMerchantRules,
   useDeleteCreditCardInvoice,
   useSaveCreditCardInvoice,
   useUpdateCreditCardInvoice,
+  useUpsertCreditCardProfile,
   useUpsertCreditCardMerchantRules,
+  buildCreditCardProfileKey,
   type CreditCardInvoice,
   type CreditCardInvoiceItem,
   type CreditCardMerchantRule,
+  type CreditCardProfile,
 } from '@/hooks/useCreditCardInvoices';
 import { useTransactionCategories } from '@/hooks/useFinancialConfig';
 import { useClients } from '@/hooks/useTransactions';
@@ -63,7 +67,8 @@ const fmt = (value: number) => value.toLocaleString('pt-BR', { style: 'currency'
 
 type SortKey = 'date' | 'description' | 'card' | 'scope' | 'category' | 'client' | 'amount' | 'conversion';
 type SortDirection = 'asc' | 'desc';
-type WorkflowStep = 'manage' | 'preview';
+type WorkflowStep = 'manage' | 'preview' | 'finance';
+type CardViewMode = 'ALL' | 'PESSOAL' | 'EMPRESA' | 'FINANCEIRO';
 type MerchantRule = {
   merchantKey: string;
   label: string;
@@ -93,10 +98,19 @@ export function CreditCardInvoicesView() {
   const [conversionFilter, setConversionFilter] = useState('ALL');
   const [groupByMerchant, setGroupByMerchant] = useState(false);
   const [workflowStep, setWorkflowStep] = useState<WorkflowStep>('manage');
+  const [cardViewMode, setCardViewMode] = useState<CardViewMode>('ALL');
   const [collapsedMerchantGroups, setCollapsedMerchantGroups] = useState<Set<string>>(new Set());
   const [merchantRuleDialogItem, setMerchantRuleDialogItem] = useState<CreditCardInvoiceItem | null>(null);
   const [merchantRuleCategoryId, setMerchantRuleCategoryId] = useState('');
   const [merchantRuleScope, setMerchantRuleScope] = useState<'EMPRESA' | 'PESSOAL' | 'DUVIDA'>('EMPRESA');
+  const [cardProfileDialog, setCardProfileDialog] = useState<{
+    cardName: string;
+    finalDigits: string | null;
+    cardType: string | null;
+    ownerName: string;
+    usageScope: 'EMPRESA' | 'PESSOAL' | 'DUVIDA';
+    color: string;
+  } | null>(null);
   const [sortKey, setSortKey] = useState<SortKey>('date');
   const [sortDirection, setSortDirection] = useState<SortDirection>('asc');
   const [bulkCategoryId, setBulkCategoryId] = useState('');
@@ -106,6 +120,7 @@ export function CreditCardInvoicesView() {
   const { data: invoices = [] } = useCreditCardInvoices();
   const { data: items = [], isLoading: itemsLoading } = useCreditCardInvoiceItems(selectedInvoiceId);
   const { data: savedMerchantRules = [] } = useCreditCardMerchantRules();
+  const { data: cardProfiles = [] } = useCreditCardProfiles();
 
   useEffect(() => {
     if (!selectedInvoiceId && invoices.length > 0) {
@@ -120,6 +135,7 @@ export function CreditCardInvoicesView() {
   const bulkUpdate = useBulkUpdateCreditCardItems();
   const convertItems = useConvertCreditCardItemsToTransactions();
   const upsertMerchantRules = useUpsertCreditCardMerchantRules();
+  const upsertCardProfile = useUpsertCreditCardProfile();
 
   const selectedParsedCards = useMemo<CreditCardStatementCard[]>(
     () => parsed ? parsed.cards.filter(card => selectedCards.has(card.id)) : [],
@@ -144,19 +160,29 @@ export function CreditCardInvoicesView() {
     () => new Map(merchantRules.map(rule => [rule.merchantKey, rule])),
     [merchantRules],
   );
+  const cardProfileByKey = useMemo(
+    () => new Map((cardProfiles as CreditCardProfile[]).map(profile => [profile.card_key, profile])),
+    [cardProfiles],
+  );
 
   const activeInvoice = invoices.find(invoice => invoice.id === selectedInvoiceId) || invoices[0] || null;
   const invoiceCards = useMemo(() => {
-    const map = new Map<string, { key: string; label: string; total: number; count: number }>();
+    const map = new Map<string, { key: string; label: string; total: number; count: number; profile?: CreditCardProfile }>();
     for (const item of items) {
       const key = cardKey(item);
-      const current = map.get(key) || { key, label: cardLabel(item), total: 0, count: 0 };
+      const current = map.get(key) || {
+        key,
+        label: cardLabel(item),
+        total: 0,
+        count: 0,
+        profile: cardProfileByKey.get(key),
+      };
       current.total += Number(item.amount) || 0;
       current.count += 1;
       map.set(key, current);
     }
     return Array.from(map.values()).sort((a, b) => a.label.localeCompare(b.label));
-  }, [items]);
+  }, [items, cardProfileByKey]);
 
   const invoiceStats = useMemo(() => {
     const total = items.reduce((sum, item) => sum + (Number(item.amount) || 0), 0);
@@ -179,6 +205,9 @@ export function CreditCardInvoicesView() {
     const text = search.trim().toLowerCase();
     return items.filter(item => {
       if (selectedCardKeys.size > 0 && !selectedCardKeys.has(cardKey(item))) return false;
+      if (cardViewMode === 'PESSOAL' && item.usage_scope !== 'PESSOAL') return false;
+      if (cardViewMode === 'EMPRESA' && item.usage_scope !== 'EMPRESA') return false;
+      if (cardViewMode === 'FINANCEIRO' && !(item.usage_scope === 'EMPRESA' && item.conversion_status !== 'CONVERTIDO' && item.conversion_status !== 'IGNORADO')) return false;
       if (scopeFilter !== 'ALL' && item.usage_scope !== scopeFilter) return false;
       if (conversionFilter !== 'ALL' && item.conversion_status !== conversionFilter) return false;
       if (!text) return true;
@@ -192,7 +221,7 @@ export function CreditCardInvoicesView() {
         item.recurring_clients?.name?.toLowerCase().includes(text)
       );
     });
-  }, [items, search, selectedCardKeys, scopeFilter, conversionFilter]);
+  }, [items, search, selectedCardKeys, scopeFilter, conversionFilter, cardViewMode]);
 
   const visibleItems = useMemo(
     () => sortItems(filteredItems, sortKey, sortDirection),
@@ -384,6 +413,47 @@ export function CreditCardInvoicesView() {
     setScopeFilter('ALL');
     setConversionFilter('ALL');
     setSearch('');
+  };
+
+  const openCardProfileDialog = (card: { label: string; key: string; profile?: CreditCardProfile }) => {
+    const sample = items.find(item => cardKey(item) === card.key);
+    const profile = card.profile || cardProfileByKey.get(card.key);
+    setCardProfileDialog({
+      cardName: sample?.card_name || profile?.card_name || card.label,
+      finalDigits: sample?.card_final_digits || profile?.card_final_digits || null,
+      cardType: sample?.card_type || profile?.card_type || null,
+      ownerName: profile?.owner_name || '',
+      usageScope: profile?.usage_scope || 'DUVIDA',
+      color: profile?.color || '#10b981',
+    });
+  };
+
+  const saveCardProfile = async (applyToCurrentInvoice = false) => {
+    if (!cardProfileDialog) return;
+    const profile = await upsertCardProfile.mutateAsync({
+      card_name: cardProfileDialog.cardName,
+      card_final_digits: cardProfileDialog.finalDigits,
+      card_type: cardProfileDialog.cardType,
+      owner_name: cardProfileDialog.ownerName || null,
+      usage_scope: cardProfileDialog.usageScope,
+      color: cardProfileDialog.color,
+    });
+
+    if (applyToCurrentInvoice) {
+      const ids = items
+        .filter(item => buildCreditCardProfileKey(item.card_name, item.card_final_digits) === profile.card_key)
+        .map(item => item.id);
+      if (ids.length > 0) {
+        await bulkUpdate.mutateAsync({
+          ids,
+          updates: {
+            usage_scope: profile.usage_scope,
+            conversion_status: profile.usage_scope === 'PESSOAL' ? 'IGNORADO' : 'NAO_SELECIONADO',
+          },
+        });
+      }
+    }
+    setCardProfileDialog(null);
   };
 
   const exportParsedCards = () => {
@@ -882,24 +952,72 @@ export function CreditCardInvoicesView() {
                   <p className="mt-2 text-sm font-bold">{fmt(invoiceStats.total)}</p>
                 </button>
                 {invoiceCards.map(card => (
-                  <button
+                  <div
                     key={card.key}
-                    type="button"
-                    onClick={() => toggleInvoiceCard(card.key)}
                     className={cn('rounded-xl border p-3 text-left transition hover:border-primary/50', selectedCardKeys.has(card.key) && 'border-primary bg-primary/5')}
                   >
-                    <div className="flex items-start justify-between gap-2">
-                      <p className="truncate font-semibold">{card.label}</p>
-                      <Checkbox checked={selectedCardKeys.has(card.key)} />
+                    <button type="button" onClick={() => toggleInvoiceCard(card.key)} className="w-full text-left">
+                      <div className="flex items-start justify-between gap-2">
+                        <p className="truncate font-semibold">{card.label}</p>
+                        <Checkbox checked={selectedCardKeys.has(card.key)} />
+                      </div>
+                      <p className="text-xs text-muted-foreground">{card.count} lançamento(s)</p>
+                      <p className="mt-2 text-sm font-bold">{fmt(card.total)}</p>
+                    </button>
+                    <div className="mt-3 flex items-center justify-between gap-2">
+                      <CardProfileBadge profile={card.profile} />
+                      <Button size="sm" variant="ghost" className="h-7 px-2 text-xs" onClick={() => openCardProfileDialog(card)}>
+                        <Pencil className="mr-1 h-3 w-3" />
+                        Cartão
+                      </Button>
                     </div>
-                    <p className="text-xs text-muted-foreground">{card.count} lançamento(s)</p>
-                    <p className="mt-2 text-sm font-bold">{fmt(card.total)}</p>
-                  </button>
+                  </div>
                 ))}
               </div>
             )}
 
-            <div className="grid gap-2 rounded-2xl border bg-muted/20 p-2 md:grid-cols-2">
+            <div className="grid gap-2 rounded-2xl border bg-muted/20 p-2 md:grid-cols-4">
+              <Button
+                variant={cardViewMode === 'ALL' ? 'default' : 'ghost'}
+                onClick={() => setCardViewMode('ALL')}
+                className="justify-start"
+              >
+                <Layers3 className="mr-2 h-4 w-4" />
+                Geral
+              </Button>
+              <Button
+                variant={cardViewMode === 'PESSOAL' ? 'default' : 'ghost'}
+                onClick={() => {
+                  setCardViewMode('PESSOAL');
+                  setWorkflowStep('manage');
+                }}
+                className="justify-start"
+              >
+                <CreditCard className="mr-2 h-4 w-4" />
+                Pessoal
+              </Button>
+              <Button
+                variant={cardViewMode === 'EMPRESA' ? 'default' : 'ghost'}
+                onClick={() => setCardViewMode('EMPRESA')}
+                className="justify-start"
+              >
+                <Tags className="mr-2 h-4 w-4" />
+                Empresa
+              </Button>
+              <Button
+                variant={cardViewMode === 'FINANCEIRO' ? 'default' : 'ghost'}
+                onClick={() => {
+                  setCardViewMode('FINANCEIRO');
+                  setWorkflowStep('finance');
+                }}
+                className="justify-start"
+              >
+                <Eye className="mr-2 h-4 w-4" />
+                Financeiro
+              </Button>
+            </div>
+
+            <div className="grid gap-2 rounded-2xl border bg-muted/20 p-2 md:grid-cols-3">
               <Button
                 variant={workflowStep === 'manage' ? 'default' : 'ghost'}
                 onClick={() => setWorkflowStep('manage')}
@@ -916,10 +1034,22 @@ export function CreditCardInvoicesView() {
                 <Eye className="mr-2 h-4 w-4" />
                 Pré-lançamentos ({previewItems.length})
               </Button>
+              <Button
+                variant={workflowStep === 'finance' ? 'default' : 'ghost'}
+                onClick={() => {
+                  setWorkflowStep('finance');
+                  setCardViewMode('FINANCEIRO');
+                }}
+                className="justify-start"
+              >
+                <CheckCircle2 className="mr-2 h-4 w-4" />
+                Financeiro final
+              </Button>
             </div>
 
             {workflowStep === 'manage' ? (
               <>
+            {cardViewMode !== 'PESSOAL' && (
             <Card className="border-amber-200 bg-amber-50/60">
               <CardContent className="flex flex-col gap-3 p-4 lg:flex-row lg:items-center lg:justify-between">
                 <div>
@@ -937,6 +1067,7 @@ export function CreditCardInvoicesView() {
                 </Button>
               </CardContent>
             </Card>
+            )}
 
             <div className="grid gap-2 lg:grid-cols-[1fr_repeat(4,180px)]">
               <div className="relative flex-1">
@@ -1188,6 +1319,66 @@ export function CreditCardInvoicesView() {
               </Button>
             </div>
           </div>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={!!cardProfileDialog} onOpenChange={(open) => !open && setCardProfileDialog(null)}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Configurar cartão</DialogTitle>
+          </DialogHeader>
+          {cardProfileDialog && (
+            <div className="space-y-4">
+              <div className="rounded-xl border bg-muted/40 p-3">
+                <p className="text-sm font-semibold">{cardProfileDialog.cardName}</p>
+                <p className="text-xs text-muted-foreground">
+                  Final {cardProfileDialog.finalDigits || 'não identificado'} · {cardProfileDialog.cardType || 'tipo não informado'}
+                </p>
+              </div>
+              <div className="grid gap-3 sm:grid-cols-2">
+                <div>
+                  <p className="mb-2 text-sm font-medium">Dono / responsável</p>
+                  <Input
+                    value={cardProfileDialog.ownerName}
+                    onChange={(event) => setCardProfileDialog(prev => prev ? { ...prev, ownerName: event.target.value } : prev)}
+                    placeholder="Ex: Patrick, Zenilda, Ramos"
+                  />
+                </div>
+                <div>
+                  <p className="mb-2 text-sm font-medium">Tipo do cartão</p>
+                  <Select
+                    value={cardProfileDialog.usageScope}
+                    onValueChange={(value: 'EMPRESA' | 'PESSOAL' | 'DUVIDA') => {
+                      setCardProfileDialog(prev => prev ? {
+                        ...prev,
+                        usageScope: value,
+                        color: value === 'EMPRESA' ? '#10b981' : value === 'PESSOAL' ? '#f59e0b' : '#64748b',
+                      } : prev);
+                    }}
+                  >
+                    <SelectTrigger><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="EMPRESA">Empresa</SelectItem>
+                      <SelectItem value="PESSOAL">Pessoal</SelectItem>
+                      <SelectItem value="DUVIDA">Não definido</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+              </div>
+              <div className="rounded-xl border border-primary/20 bg-primary/5 p-3 text-xs text-muted-foreground">
+                Essa configuração será usada nas próximas importações. Se aplicar na fatura atual, todos os itens desse cartão recebem a marcação escolhida agora.
+              </div>
+              <div className="flex flex-col gap-2 sm:flex-row sm:justify-end">
+                <Button variant="outline" onClick={() => setCardProfileDialog(null)}>Cancelar</Button>
+                <Button variant="outline" onClick={() => saveCardProfile(false)} disabled={upsertCardProfile.isPending}>
+                  Salvar para próximas faturas
+                </Button>
+                <Button onClick={() => saveCardProfile(true)} disabled={upsertCardProfile.isPending || bulkUpdate.isPending}>
+                  Salvar e aplicar nesta fatura
+                </Button>
+              </div>
+            </div>
+          )}
         </DialogContent>
       </Dialog>
     </div>
@@ -1546,6 +1737,24 @@ function isReadyToConvert(item: CreditCardInvoiceItem) {
     !!item.transaction_category_id &&
     !!(item.account_id || item.transaction_categories?.default_account_id) &&
     !!(item.cost_center_id || item.transaction_categories?.cost_center_id)
+  );
+}
+
+function CardProfileBadge({ profile }: { profile?: CreditCardProfile }) {
+  if (!profile) {
+    return <Badge variant="outline" className="border-slate-200 bg-slate-50 text-slate-600">Não configurado</Badge>;
+  }
+  const label = profile.usage_scope === 'EMPRESA' ? 'Cartão empresa' : profile.usage_scope === 'PESSOAL' ? 'Cartão pessoal' : 'Não definido';
+  const className = profile.usage_scope === 'EMPRESA'
+    ? 'border-emerald-200 bg-emerald-50 text-emerald-700'
+    : profile.usage_scope === 'PESSOAL'
+      ? 'border-amber-200 bg-amber-50 text-amber-700'
+      : 'border-slate-200 bg-slate-50 text-slate-600';
+  return (
+    <div className="flex flex-col gap-1">
+      <Badge variant="outline" className={className}>{label}</Badge>
+      {profile.owner_name && <span className="text-[10px] text-muted-foreground">{profile.owner_name}</span>}
+    </div>
   );
 }
 
