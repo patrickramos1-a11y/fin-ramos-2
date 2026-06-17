@@ -11,6 +11,10 @@ export interface ContractTemplate {
   description: string | null;
   cover_title: string | null;
   cover_subtitle: string | null;
+  cover_image_url?: string | null;
+  accent_color?: string | null;
+  template_status?: string | null;
+  version_label?: string | null;
   active: boolean;
   created_at: string;
   updated_at: string;
@@ -22,6 +26,10 @@ export interface ContractClause {
   title: string;
   body: string;
   display_order: number;
+  clause_kind?: string | null;
+  is_required?: boolean | null;
+  version_label?: string | null;
+  notes?: string | null;
   active: boolean;
   created_at: string;
   updated_at: string;
@@ -336,6 +344,34 @@ export function useCreateAcceptanceLink() {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['contract-documents'] });
+    },
+  });
+}
+
+export function useUpdateContractClause() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: async (input: {
+      id: string;
+      templateId: string;
+      updates: Partial<Pick<ContractClause, 'title' | 'body' | 'display_order' | 'active'>>;
+    }) => {
+      const { data, error } = await supabase
+        .from('contract_clauses' as any)
+        .update({
+          ...input.updates,
+          updated_at: new Date().toISOString(),
+        })
+        .eq('id', input.id)
+        .select()
+        .single();
+
+      if (error) throw error;
+      return data as ContractClause;
+    },
+    onSuccess: (_data, input) => {
+      queryClient.invalidateQueries({ queryKey: ['contract-clauses', input.templateId] });
     },
   });
 }

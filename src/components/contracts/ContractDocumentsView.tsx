@@ -1,15 +1,19 @@
 import { useEffect, useMemo, useState } from 'react';
 import {
+  BookOpen,
   CheckCircle2,
   Clipboard,
   ExternalLink,
   FileCheck2,
   FileText,
+  Layers3,
   Link2,
   Loader2,
   PencilLine,
+  Save,
   Send,
   ShieldCheck,
+  Sparkles,
   User,
   Users,
 } from 'lucide-react';
@@ -37,6 +41,7 @@ import {
   useContractTemplates,
   useCreateAcceptanceLink,
   useCreateContractDocument,
+  useUpdateContractClause,
 } from '@/hooks/useDigitalContracts';
 
 const statusLabels: Record<string, string> = {
@@ -70,18 +75,33 @@ const emptyForm = {
   endDate: '',
 };
 
+type ContractWorkspaceTab = 'modelos' | 'criar' | 'clausulas' | 'previa' | 'gerados' | 'aceites';
+
+const workspaceTabs: Array<{ id: ContractWorkspaceTab; label: string; description: string; icon: typeof FileText }> = [
+  { id: 'modelos', label: 'Modelos', description: 'Capas e tipos de contrato', icon: Layers3 },
+  { id: 'criar', label: 'Criar contrato', description: 'Contratante, plano e vigência', icon: FileCheck2 },
+  { id: 'clausulas', label: 'Cláusulas', description: 'Biblioteca editável', icon: BookOpen },
+  { id: 'previa', label: 'Prévia', description: 'Visual digital', icon: FileText },
+  { id: 'gerados', label: 'Gerados', description: 'Contratos criados', icon: ShieldCheck },
+  { id: 'aceites', label: 'Aceites', description: 'Link e auditoria', icon: Link2 },
+];
+
 export function ContractDocumentsView() {
+  const [activeTab, setActiveTab] = useState<ContractWorkspaceTab>('modelos');
   const [selectedTemplateId, setSelectedTemplateId] = useState<string | null>(null);
   const [selectedDocumentId, setSelectedDocumentId] = useState<string | null>(null);
   const [form, setForm] = useState(emptyForm);
   const [selectedClauseIds, setSelectedClauseIds] = useState<string[]>([]);
   const [generatedLink, setGeneratedLink] = useState<string | null>(null);
+  const [editingClauseId, setEditingClauseId] = useState<string | null>(null);
+  const [clauseDraft, setClauseDraft] = useState({ title: '', body: '' });
 
   const { data: templates = [], isLoading: loadingTemplates, error: templatesError } = useContractTemplates();
   const { data: clauses = [], isLoading: loadingClauses } = useContractClauses(selectedTemplateId);
   const { data: documents = [], isLoading: loadingDocuments } = useContractDocuments();
   const createDocument = useCreateContractDocument();
   const createAcceptanceLink = useCreateAcceptanceLink();
+  const updateClause = useUpdateContractClause();
 
   const selectedTemplate = templates.find((template) => template.id === selectedTemplateId) || null;
   const selectedDocument = documents.find((document) => document.id === selectedDocumentId) || documents[0] || null;
@@ -98,6 +118,19 @@ export function ContractDocumentsView() {
       setSelectedClauseIds(clauses.map((clause) => clause.id));
     }
   }, [clauses, selectedClauseIds.length]);
+
+  useEffect(() => {
+    if (!editingClauseId && clauses.length > 0) {
+      setEditingClauseId(clauses[0].id);
+    }
+  }, [clauses, editingClauseId]);
+
+  useEffect(() => {
+    const clause = clauses.find((item) => item.id === editingClauseId);
+    if (clause) {
+      setClauseDraft({ title: clause.title, body: clause.body });
+    }
+  }, [clauses, editingClauseId]);
 
   const documentIsValid = useMemo(() => {
     if (!form.contractorName.trim()) return false;
@@ -150,6 +183,7 @@ export function ContractDocumentsView() {
       });
       setSelectedDocumentId(created.id);
       setGeneratedLink(null);
+      setActiveTab('previa');
       toast.success('Contrato digital criado com snapshot das cláusulas.');
     } catch (error) {
       toast.error(error instanceof Error ? error.message : 'Erro ao criar contrato digital.');
@@ -175,6 +209,28 @@ export function ContractDocumentsView() {
     toast.success('Link copiado novamente.');
   };
 
+  const handleSaveClause = async () => {
+    if (!editingClauseId || !selectedTemplateId) return;
+    if (!clauseDraft.title.trim() || !clauseDraft.body.trim()) {
+      toast.error('Informe título e texto da cláusula.');
+      return;
+    }
+
+    try {
+      await updateClause.mutateAsync({
+        id: editingClauseId,
+        templateId: selectedTemplateId,
+        updates: {
+          title: clauseDraft.title.trim(),
+          body: clauseDraft.body.trim(),
+        },
+      });
+      toast.success('Cláusula atualizada para os próximos contratos.');
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'Erro ao atualizar cláusula.');
+    }
+  };
+
   if (templatesError) {
     return (
       <Card className="border-amber-200 bg-amber-50/60">
@@ -190,8 +246,43 @@ export function ContractDocumentsView() {
 
   return (
     <div className="space-y-6">
-      <div className="grid grid-cols-1 xl:grid-cols-[1.1fr_0.9fr] gap-6">
-        <Card className="overflow-hidden border-primary/20">
+      <ContractWorkspaceHeader />
+      <ContractWorkspaceTabs activeTab={activeTab} onChange={setActiveTab} />
+
+      {activeTab === 'modelos' && (
+        <ModelLibrary
+          templates={templates}
+          loading={loadingTemplates}
+          selectedTemplateId={selectedTemplateId}
+          onSelect={(templateId) => {
+            setSelectedTemplateId(templateId);
+            setSelectedClauseIds([]);
+          }}
+          onUse={(templateId) => {
+            setSelectedTemplateId(templateId);
+            setSelectedClauseIds([]);
+            setActiveTab('criar');
+          }}
+        />
+      )}
+
+      {activeTab === 'clausulas' && (
+        <ClauseLibrary
+          clauses={clauses}
+          loading={loadingClauses}
+          editingClauseId={editingClauseId}
+          onEdit={setEditingClauseId}
+          draft={clauseDraft}
+          onDraftChange={setClauseDraft}
+          onSave={handleSaveClause}
+          saving={updateClause.isPending}
+          template={selectedTemplate}
+        />
+      )}
+
+      {(activeTab === 'criar' || activeTab === 'gerados') && (
+        <div className="grid grid-cols-1 gap-6">
+          <Card className={cn('overflow-hidden border-primary/20', activeTab === 'gerados' && 'hidden')}>
           <CardHeader className="bg-gradient-to-br from-emerald-50 via-white to-orange-50">
             <div className="flex items-start justify-between gap-4">
               <div>
@@ -344,7 +435,7 @@ export function ContractDocumentsView() {
           </CardContent>
         </Card>
 
-        <Card>
+          <Card className={cn(activeTab === 'criar' && 'hidden')}>
           <CardHeader>
             <CardTitle className="flex items-center gap-2">
               <ShieldCheck className="w-5 h-5 text-primary" />
@@ -390,10 +481,11 @@ export function ContractDocumentsView() {
               ))
             )}
           </CardContent>
-        </Card>
-      </div>
+          </Card>
+        </div>
+      )}
 
-      {selectedDocument && (
+      {activeTab === 'previa' && selectedDocument && (
         <Card className="overflow-hidden">
           <CardHeader className="bg-card">
             <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-3">
@@ -439,7 +531,356 @@ export function ContractDocumentsView() {
           </CardContent>
         </Card>
       )}
+
+      {activeTab === 'previa' && !selectedDocument && (
+        <EmptyContractState
+          title="Nenhum contrato selecionado para prévia"
+          description="Crie um contrato ou selecione um contrato gerado para visualizar a versão digital."
+          actionLabel="Criar contrato"
+          onAction={() => setActiveTab('criar')}
+        />
+      )}
+
+      {activeTab === 'aceites' && (
+        <AcceptanceWorkspace
+          selectedDocument={selectedDocument}
+          generatedLink={generatedLink}
+          onCreateLink={selectedDocument ? () => handleCreateAcceptanceLink(selectedDocument) : undefined}
+          onCopyLink={handleCopyLink}
+          loading={createAcceptanceLink.isPending}
+        />
+      )}
     </div>
+  );
+}
+
+function ContractWorkspaceHeader() {
+  return (
+    <Card className="overflow-hidden border-primary/20 bg-gradient-to-br from-emerald-50 via-white to-orange-50">
+      <CardContent className="p-6 md:p-8">
+        <div className="grid grid-cols-1 lg:grid-cols-[1.2fr_0.8fr] gap-6 items-end">
+          <div>
+            <Badge variant="outline" className="mb-4 bg-white/80 text-primary border-primary/20">
+              Contratos digitais
+            </Badge>
+            <h2 className="text-3xl md:text-4xl font-display font-bold text-foreground">
+              Central de criação, cláusulas e aceite
+            </h2>
+            <p className="mt-3 max-w-3xl text-sm md:text-base text-muted-foreground">
+              Organize modelos com capa, edite cláusulas reutilizáveis e gere uma versão digital congelada para o cliente revisar e aceitar por link.
+            </p>
+          </div>
+          <div className="rounded-3xl border bg-white/75 p-5 shadow-soft">
+            <div className="flex items-start gap-3">
+              <div className="rounded-2xl bg-primary/10 p-3 text-primary">
+                <Sparkles className="w-5 h-5" />
+              </div>
+              <div>
+                <p className="font-semibold">Ramos Engenharia como emitente</p>
+                <p className="mt-1 text-xs text-muted-foreground">
+                  CNPJ 28.439.151/0001-60 · Castanhal/PA · aceite operacional com trilha de auditoria.
+                </p>
+              </div>
+            </div>
+          </div>
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
+function ContractWorkspaceTabs({
+  activeTab,
+  onChange,
+}: {
+  activeTab: ContractWorkspaceTab;
+  onChange: (tab: ContractWorkspaceTab) => void;
+}) {
+  return (
+    <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-6 gap-2 rounded-3xl border bg-muted/30 p-2">
+      {workspaceTabs.map((tab) => {
+        const Icon = tab.icon;
+        const active = tab.id === activeTab;
+        return (
+          <button
+            key={tab.id}
+            type="button"
+            onClick={() => onChange(tab.id)}
+            className={cn(
+              'rounded-2xl px-3 py-3 text-left transition-all',
+              active ? 'bg-white shadow-soft text-foreground' : 'text-muted-foreground hover:bg-white/70 hover:text-foreground'
+            )}
+          >
+            <div className="flex items-center gap-2">
+              <Icon className={cn('w-4 h-4', active && 'text-primary')} />
+              <span className="font-semibold text-sm">{tab.label}</span>
+            </div>
+            <p className="mt-1 text-[11px] leading-snug">{tab.description}</p>
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+function ModelLibrary({
+  templates,
+  loading,
+  selectedTemplateId,
+  onSelect,
+  onUse,
+}: {
+  templates: ContractTemplate[];
+  loading: boolean;
+  selectedTemplateId: string | null;
+  onSelect: (templateId: string) => void;
+  onUse: (templateId: string) => void;
+}) {
+  if (loading) {
+    return (
+      <div className="h-52 flex items-center justify-center">
+        <Loader2 className="w-6 h-6 animate-spin text-muted-foreground" />
+      </div>
+    );
+  }
+
+  return (
+    <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">
+      {templates.map((template) => {
+        const active = template.id === selectedTemplateId;
+        return (
+          <Card key={template.id} className={cn('overflow-hidden transition-all', active && 'border-primary shadow-soft')}>
+            <div className="min-h-56 bg-gradient-to-br from-emerald-950 via-emerald-800 to-orange-500 p-6 text-white flex flex-col justify-between">
+              <div>
+                <p className="text-xs uppercase tracking-[0.32em] text-white/70">Ramos Engenharia</p>
+                <h3 className="mt-6 text-3xl font-display font-bold leading-tight">
+                  {template.cover_title || template.name}
+                </h3>
+              </div>
+              <p className="text-sm text-white/80">{template.cover_subtitle || 'Construindo o presente para preservar o futuro'}</p>
+            </div>
+            <CardContent className="p-5 space-y-4">
+              <div>
+                <p className="font-semibold">{template.name}</p>
+                <p className="mt-1 text-sm text-muted-foreground line-clamp-2">{template.description || template.service_type}</p>
+              </div>
+              <div className="flex flex-wrap gap-2">
+                <Badge variant="outline">{template.service_type || 'Modelo'}</Badge>
+                <Badge variant="outline" className="bg-income/10 text-income border-income/20">
+                  {template.version_label || 'v1'}
+                </Badge>
+              </div>
+              <div className="grid grid-cols-2 gap-2">
+                <Button variant="outline" onClick={() => onSelect(template.id)}>
+                  Selecionar
+                </Button>
+                <Button onClick={() => onUse(template.id)}>
+                  Criar com este
+                </Button>
+              </div>
+            </CardContent>
+          </Card>
+        );
+      })}
+    </div>
+  );
+}
+
+function ClauseLibrary({
+  clauses,
+  loading,
+  editingClauseId,
+  onEdit,
+  draft,
+  onDraftChange,
+  onSave,
+  saving,
+  template,
+}: {
+  clauses: ContractClause[];
+  loading: boolean;
+  editingClauseId: string | null;
+  onEdit: (clauseId: string) => void;
+  draft: { title: string; body: string };
+  onDraftChange: (draft: { title: string; body: string }) => void;
+  onSave: () => void;
+  saving: boolean;
+  template: ContractTemplate | null;
+}) {
+  const editingClause = clauses.find((clause) => clause.id === editingClauseId) || null;
+
+  return (
+    <div className="grid grid-cols-1 xl:grid-cols-[0.85fr_1.15fr] gap-6">
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <BookOpen className="w-5 h-5 text-primary" />
+            Biblioteca de cláusulas
+          </CardTitle>
+          <p className="text-sm text-muted-foreground">
+            {template?.name || 'Selecione um modelo'} · alterações afetam somente novos contratos.
+          </p>
+        </CardHeader>
+        <CardContent className="space-y-2 max-h-[680px] overflow-y-auto">
+          {loading ? (
+            <div className="h-48 flex items-center justify-center">
+              <Loader2 className="w-6 h-6 animate-spin text-muted-foreground" />
+            </div>
+          ) : clauses.length === 0 ? (
+            <div className="rounded-2xl border border-dashed p-8 text-center text-muted-foreground">
+              Nenhuma cláusula cadastrada para este modelo.
+            </div>
+          ) : (
+            clauses.map((clause) => (
+              <button
+                key={clause.id}
+                type="button"
+                onClick={() => onEdit(clause.id)}
+                className={cn(
+                  'w-full rounded-2xl border p-4 text-left transition-all',
+                  clause.id === editingClauseId ? 'border-primary bg-primary/5 shadow-soft' : 'hover:bg-muted/50'
+                )}
+              >
+                <div className="flex items-start justify-between gap-3">
+                  <div>
+                    <p className="font-semibold">
+                      {clause.display_order}. {clause.title}
+                    </p>
+                    <p className="mt-1 text-xs text-muted-foreground line-clamp-2">{clause.body}</p>
+                  </div>
+                  <PencilLine className="w-4 h-4 text-muted-foreground" />
+                </div>
+              </button>
+            ))
+          )}
+        </CardContent>
+      </Card>
+
+      <Card className="overflow-hidden">
+        <CardHeader className="bg-gradient-to-br from-emerald-50 via-white to-orange-50">
+          <CardTitle>Editor da cláusula</CardTitle>
+          <p className="text-sm text-muted-foreground">
+            Edite o texto padrão usado nos próximos contratos. Contratos já gerados continuam congelados.
+          </p>
+        </CardHeader>
+        <CardContent className="p-5 space-y-4">
+          {editingClause ? (
+            <>
+              <Field label="Título da cláusula">
+                <Input value={draft.title} onChange={(event) => onDraftChange({ ...draft, title: event.target.value })} />
+              </Field>
+              <Field label="Texto completo">
+                <Textarea
+                  value={draft.body}
+                  onChange={(event) => onDraftChange({ ...draft, body: event.target.value })}
+                  rows={18}
+                  className="leading-7"
+                />
+              </Field>
+              <div className="flex flex-col md:flex-row md:items-center justify-between gap-3 rounded-2xl border bg-muted/30 p-4">
+                <div>
+                  <p className="font-semibold text-sm">Atualização controlada</p>
+                  <p className="text-xs text-muted-foreground">
+                    A mudança entra na biblioteca e será usada somente em novos documentos.
+                  </p>
+                </div>
+                <Button onClick={onSave} disabled={saving}>
+                  {saving ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Save className="w-4 h-4 mr-2" />}
+                  Salvar cláusula
+                </Button>
+              </div>
+            </>
+          ) : (
+            <div className="rounded-2xl border border-dashed p-10 text-center text-muted-foreground">
+              Selecione uma cláusula para editar.
+            </div>
+          )}
+        </CardContent>
+      </Card>
+    </div>
+  );
+}
+
+function AcceptanceWorkspace({
+  selectedDocument,
+  generatedLink,
+  onCreateLink,
+  onCopyLink,
+  loading,
+}: {
+  selectedDocument: ContractDocument | null;
+  generatedLink: string | null;
+  onCreateLink?: () => void;
+  onCopyLink: () => void;
+  loading: boolean;
+}) {
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="flex items-center gap-2">
+          <Link2 className="w-5 h-5 text-primary" />
+          Link de aceite e auditoria
+        </CardTitle>
+        <p className="text-sm text-muted-foreground">
+          Gere um link público seguro para o cliente ler, confirmar os dados e aceitar o contrato.
+        </p>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        {selectedDocument ? (
+          <>
+            <div className="rounded-2xl border bg-muted/30 p-4">
+              <p className="text-sm text-muted-foreground">Contrato selecionado</p>
+              <p className="mt-1 font-semibold">{selectedDocument.title}</p>
+              <p className="text-xs text-muted-foreground">{selectedDocument.contractor_name} · {selectedDocument.contractor_document}</p>
+            </div>
+            <div className="flex flex-wrap gap-2">
+              <Button onClick={onCreateLink} disabled={loading || selectedDocument.status === 'aceito'}>
+                {loading ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Send className="w-4 h-4 mr-2" />}
+                Gerar/copiar link
+              </Button>
+              {generatedLink && (
+                <Button variant="outline" onClick={onCopyLink}>
+                  <Clipboard className="w-4 h-4 mr-2" />
+                  Copiar link atual
+                </Button>
+              )}
+            </div>
+            {generatedLink && (
+              <div className="rounded-2xl border border-primary/20 bg-primary/5 p-4">
+                <code className="text-xs break-all">{generatedLink}</code>
+              </div>
+            )}
+          </>
+        ) : (
+          <div className="rounded-2xl border border-dashed p-10 text-center text-muted-foreground">
+            Selecione um contrato gerado para criar o link de aceite.
+          </div>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
+function EmptyContractState({
+  title,
+  description,
+  actionLabel,
+  onAction,
+}: {
+  title: string;
+  description: string;
+  actionLabel: string;
+  onAction: () => void;
+}) {
+  return (
+    <Card className="border-dashed">
+      <CardContent className="p-10 text-center">
+        <FileText className="mx-auto w-10 h-10 text-muted-foreground" />
+        <p className="mt-4 font-semibold">{title}</p>
+        <p className="mt-1 text-sm text-muted-foreground">{description}</p>
+        <Button className="mt-5" onClick={onAction}>{actionLabel}</Button>
+      </CardContent>
+    </Card>
   );
 }
 
