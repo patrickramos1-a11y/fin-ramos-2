@@ -1,19 +1,25 @@
 import { useEffect, useMemo, useState } from 'react';
 import {
   BookOpen,
+  Bold,
+  CaseUpper,
   CheckCircle2,
   Clipboard,
   ExternalLink,
   FileCheck2,
   FileText,
+  Heading2,
   Layers3,
   Link2,
+  List,
+  ListOrdered,
   Loader2,
   PencilLine,
   Save,
   Send,
   ShieldCheck,
   Sparkles,
+  Table2,
   User,
   Users,
 } from 'lucide-react';
@@ -708,6 +714,7 @@ function ClauseLibrary({
   template: ContractTemplate | null;
 }) {
   const editingClause = clauses.find((clause) => clause.id === editingClauseId) || null;
+  const appendToBody = (snippet: string) => onDraftChange({ ...draft, body: `${draft.body}${snippet}` });
 
   return (
     <div className="grid grid-cols-1 xl:grid-cols-[0.85fr_1.15fr] gap-6">
@@ -770,6 +777,15 @@ function ClauseLibrary({
                 <Input value={draft.title} onChange={(event) => onDraftChange({ ...draft, title: event.target.value })} />
               </Field>
               <Field label="Texto completo">
+                <ClauseFormatToolbar
+                  onHeading={() => appendToBody('\n\n## Subtítulo da seção\n')}
+                  onBold={() => appendToBody(' **texto em destaque** ')}
+                  onBullet={() => appendToBody('\n- Tópico do contrato')}
+                  onSubBullet={() => appendToBody('\n  - Subtópico detalhado')}
+                  onNumbered={() => appendToBody('\n1. Item numerado')}
+                  onTable={() => appendToBody('\n\n| Item | Descrição | Observação |\n| --- | --- | --- |\n| 1 | Serviço / condição | Informar |\n')}
+                  onUppercase={() => onDraftChange({ ...draft, title: draft.title.toUpperCase() })}
+                />
                 <Textarea
                   value={draft.body}
                   onChange={(event) => onDraftChange({ ...draft, body: event.target.value })}
@@ -777,6 +793,16 @@ function ClauseLibrary({
                   className="leading-7"
                 />
               </Field>
+              <div className="rounded-2xl border bg-white p-5">
+                <div className="flex items-center justify-between gap-3 mb-4">
+                  <p className="font-semibold text-sm">Prévia da cláusula</p>
+                  <Badge variant="outline">Markdown básico</Badge>
+                </div>
+                <div className="max-h-[420px] overflow-y-auto rounded-xl bg-muted/20 p-4">
+                  <h3 className="font-bold">{draft.title || 'Título da cláusula'}</h3>
+                  <MarkdownBlocks content={draft.body || 'O texto formatado aparecerá aqui.'} />
+                </div>
+              </div>
               <div className="flex flex-col md:flex-row md:items-center justify-between gap-3 rounded-2xl border bg-muted/30 p-4">
                 <div>
                   <p className="font-semibold text-sm">Atualização controlada</p>
@@ -797,6 +823,48 @@ function ClauseLibrary({
           )}
         </CardContent>
       </Card>
+    </div>
+  );
+}
+
+function ClauseFormatToolbar({
+  onHeading,
+  onBold,
+  onBullet,
+  onSubBullet,
+  onNumbered,
+  onTable,
+  onUppercase,
+}: {
+  onHeading: () => void;
+  onBold: () => void;
+  onBullet: () => void;
+  onSubBullet: () => void;
+  onNumbered: () => void;
+  onTable: () => void;
+  onUppercase: () => void;
+}) {
+  const actions = [
+    { label: 'Subtítulo', icon: Heading2, onClick: onHeading },
+    { label: 'Negrito', icon: Bold, onClick: onBold },
+    { label: 'Tópico', icon: List, onClick: onBullet },
+    { label: 'Subtópico', icon: List, onClick: onSubBullet },
+    { label: 'Numerado', icon: ListOrdered, onClick: onNumbered },
+    { label: 'Tabela', icon: Table2, onClick: onTable },
+    { label: 'Título MAIÚSCULO', icon: CaseUpper, onClick: onUppercase },
+  ];
+
+  return (
+    <div className="mb-2 flex flex-wrap gap-2 rounded-2xl border bg-muted/30 p-2">
+      {actions.map((action) => {
+        const Icon = action.icon;
+        return (
+          <Button key={action.label} type="button" variant="outline" size="sm" onClick={action.onClick}>
+            <Icon className="w-3.5 h-3.5 mr-1.5" />
+            {action.label}
+          </Button>
+        );
+      })}
     </div>
   );
 }
@@ -1006,7 +1074,7 @@ function ContractPreview({
               <h2 className="text-lg font-bold">
                 Cláusula {index + 1}ª - {clause.title}
               </h2>
-              <p className="mt-2 text-sm leading-7 text-muted-foreground whitespace-pre-line">{clause.body}</p>
+              <MarkdownBlocks content={clause.body} />
             </section>
           ))}
         </div>
@@ -1033,4 +1101,140 @@ function Info({ label, value }: { label: string; value: string }) {
       <p className="mt-1 font-medium">{value}</p>
     </div>
   );
+}
+
+function MarkdownBlocks({ content }: { content: string }) {
+  const lines = content.split('\n');
+  const blocks: React.ReactNode[] = [];
+  let index = 0;
+
+  while (index < lines.length) {
+    const rawLine = lines[index];
+    const line = rawLine.trimEnd();
+
+    if (!line.trim()) {
+      index += 1;
+      continue;
+    }
+
+    if (line.startsWith('|') && lines[index + 1]?.trim().startsWith('|')) {
+      const tableLines: string[] = [];
+      while (index < lines.length && lines[index].trim().startsWith('|')) {
+        tableLines.push(lines[index].trim());
+        index += 1;
+      }
+      blocks.push(<MarkdownTable key={`table-${index}`} lines={tableLines} />);
+      continue;
+    }
+
+    if (line.startsWith('## ')) {
+      blocks.push(
+        <h3 key={`heading-${index}`} className="mt-5 text-base font-bold text-foreground">
+          {line.replace(/^##\s+/, '')}
+        </h3>
+      );
+      index += 1;
+      continue;
+    }
+
+    if (/^\d+\.\s+/.test(line)) {
+      const items: string[] = [];
+      while (index < lines.length && /^\d+\.\s+/.test(lines[index].trim())) {
+        items.push(lines[index].trim().replace(/^\d+\.\s+/, ''));
+        index += 1;
+      }
+      blocks.push(
+        <ol key={`ol-${index}`} className="mt-3 list-decimal space-y-1 pl-5 text-sm leading-7 text-muted-foreground">
+          {items.map((item, itemIndex) => <li key={itemIndex}>{renderInlineMarkdown(item)}</li>)}
+        </ol>
+      );
+      continue;
+    }
+
+    if (/^[-•]\s+/.test(line.trim())) {
+      const items: Array<{ text: string; nested: boolean }> = [];
+      while (index < lines.length && /^(\s*)[-•]\s+/.test(lines[index])) {
+        const currentLine = lines[index];
+        items.push({
+          text: currentLine.trim().replace(/^[-•]\s+/, ''),
+          nested: currentLine.startsWith('  '),
+        });
+        index += 1;
+      }
+      blocks.push(
+        <ul key={`ul-${index}`} className="mt-3 space-y-1 text-sm leading-7 text-muted-foreground">
+          {items.map((item, itemIndex) => (
+            <li key={itemIndex} className={cn('flex gap-2', item.nested && 'ml-6')}>
+              <span className="mt-3 h-1.5 w-1.5 rounded-full bg-primary/70 shrink-0" />
+              <span>{renderInlineMarkdown(item.text)}</span>
+            </li>
+          ))}
+        </ul>
+      );
+      continue;
+    }
+
+    const paragraph: string[] = [];
+    while (
+      index < lines.length &&
+      lines[index].trim() &&
+      !lines[index].trim().startsWith('|') &&
+      !lines[index].trim().startsWith('## ') &&
+      !/^\d+\.\s+/.test(lines[index].trim()) &&
+      !/^[-•]\s+/.test(lines[index].trim())
+    ) {
+      paragraph.push(lines[index].trim());
+      index += 1;
+    }
+
+    blocks.push(
+      <p key={`p-${index}`} className="mt-3 text-sm leading-7 text-muted-foreground">
+        {renderInlineMarkdown(paragraph.join(' '))}
+      </p>
+    );
+  }
+
+  return <div className="mt-2">{blocks}</div>;
+}
+
+function MarkdownTable({ lines }: { lines: string[] }) {
+  const rows = lines
+    .filter((line) => !/^\|\s*-/.test(line))
+    .map((line) => line.split('|').slice(1, -1).map((cell) => cell.trim()));
+  const [header, ...bodyRows] = rows;
+
+  if (!header) return null;
+
+  return (
+    <div className="mt-4 overflow-x-auto rounded-xl border">
+      <table className="w-full min-w-[520px] text-left text-sm">
+        <thead className="bg-muted/60 text-foreground">
+          <tr>
+            {header.map((cell, cellIndex) => (
+              <th key={cellIndex} className="px-3 py-2 font-semibold">{renderInlineMarkdown(cell)}</th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {bodyRows.map((row, rowIndex) => (
+            <tr key={rowIndex} className="border-t">
+              {row.map((cell, cellIndex) => (
+                <td key={cellIndex} className="px-3 py-2 text-muted-foreground">{renderInlineMarkdown(cell)}</td>
+              ))}
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function renderInlineMarkdown(text: string) {
+  const parts = text.split(/(\*\*[^*]+\*\*)/g);
+  return parts.map((part, index) => {
+    if (part.startsWith('**') && part.endsWith('**')) {
+      return <strong key={index} className="font-semibold text-foreground">{part.slice(2, -2)}</strong>;
+    }
+    return <span key={index}>{part}</span>;
+  });
 }
