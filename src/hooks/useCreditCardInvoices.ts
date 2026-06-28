@@ -1,12 +1,18 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
 import { toast } from 'sonner';
+import { cloudflareCardsApi } from '@/lib/cloudflarePilotApi';
 import {
   brDateToISO,
   normalizeCardDescription,
   type CreditCardStatementCard,
   type ParsedCreditCardStatement,
 } from '@/lib/credit-card-fatura-parser';
+
+const useCloudflareCards =
+  import.meta.env.VITE_CARDS_BACKEND === 'cloudflare' ||
+  import.meta.env.VITE_FIN_BACKEND === 'cloudflare' ||
+  import.meta.env.VITE_USE_CLOUDFLARE_PILOT === 'true';
 
 export type CreditCardInvoice = {
   id: string;
@@ -97,10 +103,65 @@ export type CreditCardProfile = {
   updated_at: string;
 };
 
+function centsToAmount(value: unknown) {
+  return typeof value === 'number' ? value / 100 : 0;
+}
+
+function mapCloudflareInvoice(row: any): CreditCardInvoice {
+  return {
+    ...row,
+    source_meta: typeof row.source_meta === 'string' ? safeParseJson(row.source_meta, {}) : row.source_meta ?? {},
+    selected_cards: typeof row.selected_cards === 'string' ? safeParseJson(row.selected_cards, []) : row.selected_cards ?? [],
+    total_amount: row.total_amount ?? centsToAmount(row.total_amount_cents),
+    status: row.status === 'FECHADA' ? 'PRONTA' : row.status === 'CANCELADA' ? 'ARQUIVADA' : row.status,
+  } as CreditCardInvoice;
+}
+
+function mapCloudflareItem(row: any): CreditCardInvoiceItem {
+  return {
+    ...row,
+    amount: row.amount ?? centsToAmount(row.amount_cents),
+    scope: row.scope || 'nacional',
+    review_status: row.review_status || 'PENDENTE',
+    usage_scope: row.usage_scope || 'DUVIDA',
+    conversion_status: row.conversion_status || 'NAO_SELECIONADO',
+    reimbursement_status: row.reimbursement_status || 'NAO_APLICA',
+    transaction_categories: null,
+    credit_card_personal_categories: null,
+    accounts: null,
+    recurring_clients: null,
+    cost_centers: null,
+    financial_entities: null,
+  } as CreditCardInvoiceItem;
+}
+
+function mapCloudflareProfile(row: any): CreditCardProfile {
+  return {
+    ...row,
+    card_key: buildCreditCardProfileKey(row.card_name || '', row.card_final_digits || null),
+    usage_scope: row.usage_scope || row.profile_type || 'DUVIDA',
+    active: row.active !== 0,
+    color: row.color || (row.profile_type === 'PESSOAL' ? '#f59e0b' : row.profile_type === 'EMPRESA' ? '#10b981' : '#64748b'),
+  } as CreditCardProfile;
+}
+
+function safeParseJson<T>(value: string, fallback: T): T {
+  try {
+    return JSON.parse(value) as T;
+  } catch {
+    return fallback;
+  }
+}
+
 export function useCreditCardInvoices() {
   return useQuery({
-    queryKey: ['credit-card-invoices'],
+    queryKey: ['credit-card-invoices', useCloudflareCards ? 'cloudflare' : 'supabase'],
     queryFn: async () => {
+      if (useCloudflareCards) {
+        const response = await cloudflareCardsApi.listInvoices() as { invoices?: any[] };
+        return (response.invoices || []).map(mapCloudflareInvoice);
+      }
+
       const { data, error } = await (supabase as any)
         .from('credit_card_invoices')
         .select('*')
@@ -115,8 +176,13 @@ export function useCreditCardInvoices() {
 
 export function useCreditCardProfiles() {
   return useQuery({
-    queryKey: ['credit-card-profiles'],
+    queryKey: ['credit-card-profiles', useCloudflareCards ? 'cloudflare' : 'supabase'],
     queryFn: async () => {
+      if (useCloudflareCards) {
+        const response = await cloudflareCardsApi.listProfiles() as { profiles?: any[] };
+        return (response.profiles || []).map(mapCloudflareProfile);
+      }
+
       const { data, error } = await (supabase as any)
         .from('credit_card_profiles')
         .select('*')
@@ -149,6 +215,12 @@ export function useUpsertCreditCardProfile() {
         color: profile.color || (profile.usage_scope === 'PESSOAL' ? '#f59e0b' : profile.usage_scope === 'EMPRESA' ? '#10b981' : '#64748b'),
         active: true,
       };
+
+      if (useCloudflareCards) {
+        const response = await cloudflareCardsApi.saveProfile(row) as { profile?: any };
+        return mapCloudflareProfile(response.profile);
+      }
+
       const { data, error } = await (supabase as any)
         .from('credit_card_profiles')
         .upsert(row, { onConflict: 'card_key' })
@@ -174,8 +246,13 @@ export function useUpsertCreditCardProfile() {
 
 export function useCreditCardMerchantRules() {
   return useQuery({
-    queryKey: ['credit-card-merchant-rules'],
+    queryKey: ['credit-card-merchant-rules', useCloudflareCards ? 'cloudflare' : 'supabase'],
     queryFn: async () => {
+      if (useCloudflareCards) {
+        const response = await cloudflareCardsApi.listMerchantRules() as { rules?: CreditCardMerchantRule[] };
+        return response.rules || [];
+      }
+
       const { data, error } = await (supabase as any)
         .from('credit_card_merchant_rules')
         .select(`
@@ -195,8 +272,16 @@ export function useCreditCardMerchantRules() {
 
 export function useCreditCardPersonalCategories() {
   return useQuery({
-    queryKey: ['credit-card-personal-categories'],
+    queryKey: ['credit-card-personal-categories', useCloudflareCards ? 'cloudflare' : 'supabase'],
     queryFn: async () => {
+      if (useCloudflareCards) {
+        const response = await cloudflareCardsApi.listPersonalCategories() as { categories?: any[] };
+        return (response.categories || []).map(category => ({
+          ...category,
+          active: category.active !== 0,
+        })) as CreditCardPersonalCategory[];
+      }
+
       const { data, error } = await (supabase as any)
         .from('credit_card_personal_categories')
         .select('*')
@@ -218,6 +303,17 @@ export function useCreateCreditCardPersonalCategory() {
     mutationFn: async ({ name, color }: { name: string; color?: string }) => {
       const cleanName = name.trim();
       if (!cleanName) throw new Error('Informe o nome da categoria pessoal.');
+
+      if (useCloudflareCards) {
+        const response = await cloudflareCardsApi.createPersonalCategory({ name: cleanName, color: color || '#f59e0b' }) as { category?: any };
+        return {
+          ...response.category,
+          name: response.category?.name || cleanName,
+          color: response.category?.color || color || '#f59e0b',
+          active: true,
+        } as CreditCardPersonalCategory;
+      }
+
       const { data, error } = await (supabase as any)
         .from('credit_card_personal_categories')
         .insert({ name: cleanName, color: color || '#f59e0b', active: true })
@@ -252,6 +348,22 @@ export function useUpsertCreditCardMerchantRules() {
       usage_scope: 'EMPRESA' | 'PESSOAL' | 'DUVIDA';
     }>) => {
       const rows = rules.map(rule => ({ ...rule, active: true }));
+
+      if (useCloudflareCards) {
+        const saved: CreditCardMerchantRule[] = [];
+        for (const row of rows) {
+          const response = await cloudflareCardsApi.saveMerchantRule(row) as { rule?: any };
+          saved.push({
+            ...row,
+            id: response.rule?.id || row.merchant_key,
+            active: true,
+            created_at: new Date().toISOString(),
+            updated_at: new Date().toISOString(),
+          } as CreditCardMerchantRule);
+        }
+        return saved;
+      }
+
       const { data, error } = await (supabase as any)
         .from('credit_card_merchant_rules')
         .upsert(rows, { onConflict: 'merchant_key' })
@@ -276,9 +388,14 @@ export function useUpsertCreditCardMerchantRules() {
 
 export function useCreditCardInvoiceItems(invoiceId?: string | null) {
   return useQuery({
-    queryKey: ['credit-card-invoice-items', invoiceId],
+    queryKey: ['credit-card-invoice-items', invoiceId, useCloudflareCards ? 'cloudflare' : 'supabase'],
     enabled: !!invoiceId,
     queryFn: async () => {
+      if (useCloudflareCards) {
+        const response = await cloudflareCardsApi.listInvoiceItems(invoiceId as string) as { items?: any[] };
+        return (response.items || []).map(mapCloudflareItem);
+      }
+
       const { data, error } = await (supabase as any)
         .from('credit_card_invoice_items')
         .select(`
@@ -332,6 +449,70 @@ export function useSaveCreditCardInvoice() {
     }) => {
       const totalAmount = selectedCards.reduce((sum, card) => sum + card.total, 0);
       const totalTransactions = selectedCards.reduce((sum, card) => sum + card.transactions.length, 0);
+
+      if (useCloudflareCards) {
+        const profilesResponse = await cloudflareCardsApi.listProfiles() as { profiles?: any[] };
+        const profileByCard = new Map(
+          (profilesResponse.profiles || []).map(profile => {
+            const mapped = mapCloudflareProfile(profile);
+            return [mapped.card_key, mapped] as const;
+          }),
+        );
+        const payload = {
+          competence_month: month,
+          competence_year: year,
+          file_name: fileName,
+          holder: parsed.meta.holder || null,
+          invoice_label: invoiceLabel || parsed.meta.invoice || null,
+          source_meta: parsed.meta,
+          selected_cards: selectedCards.map(card => ({
+            name: card.name,
+            finalDigits: card.finalDigits,
+            type: card.type,
+            total: card.total,
+            totalNacional: card.totalNacional,
+            totalInternacional: card.totalInternacional,
+          })),
+          total_amount_cents: Math.round(totalAmount * 100),
+          total_transactions: totalTransactions,
+          status: 'CONFERENCIA',
+          items: selectedCards.flatMap(card => {
+            const profile = profileByCard.get(buildCreditCardProfileKey(card.name, card.finalDigits));
+            return card.transactions.map(tx => ({
+              card_name: card.name,
+              card_final_digits: card.finalDigits,
+              card_type: card.type,
+              transaction_date: brDateToISO(tx.date, year),
+              description: tx.description,
+              normalized_description: normalizeCardDescription(tx.description),
+              installment: tx.installment || null,
+              scope: tx.scope,
+              country: tx.country || null,
+              amount: tx.value,
+              category_hint: tx.categoryHint || null,
+              review_status: 'PENDENTE',
+              usage_scope: profile?.usage_scope || 'DUVIDA',
+              conversion_status: profile?.usage_scope === 'PESSOAL' ? 'IGNORADO' : 'NAO_SELECIONADO',
+            }));
+          }),
+        };
+        const response = await cloudflareCardsApi.createInvoice(payload) as { invoice?: { id: string } };
+        return {
+          id: response.invoice?.id,
+          competence_month: month,
+          competence_year: year,
+          file_name: fileName,
+          holder: parsed.meta.holder || null,
+          invoice_label: invoiceLabel || parsed.meta.invoice || null,
+          source_meta: parsed.meta,
+          selected_cards: payload.selected_cards,
+          total_amount: totalAmount,
+          total_transactions: totalTransactions,
+          status: 'CONFERENCIA',
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+        } as CreditCardInvoice;
+      }
 
       const { data: invoice, error: invoiceError } = await (supabase as any)
         .from('credit_card_invoices')
@@ -422,6 +603,11 @@ export function useUpdateCreditCardInvoice() {
 
   return useMutation({
     mutationFn: async ({ id, updates }: { id: string; updates: Partial<Pick<CreditCardInvoice, 'invoice_label' | 'status'>> }) => {
+      if (useCloudflareCards) {
+        const response = await cloudflareCardsApi.updateInvoice(id, { updates }) as { invoice?: any };
+        return mapCloudflareInvoice(response.invoice);
+      }
+
       const { data, error } = await (supabase as any)
         .from('credit_card_invoices')
         .update(updates)
@@ -447,6 +633,11 @@ export function useDeleteCreditCardInvoice() {
 
   return useMutation({
     mutationFn: async (invoiceId: string) => {
+      if (useCloudflareCards) {
+        await cloudflareCardsApi.deleteInvoice(invoiceId);
+        return invoiceId;
+      }
+
       const { count, error: countError } = await (supabase as any)
         .from('credit_card_invoice_items')
         .select('id', { count: 'exact', head: true })
@@ -480,6 +671,12 @@ export function useUpdateCreditCardItem() {
 
   return useMutation({
     mutationFn: async ({ id, updates }: { id: string; updates: Partial<CreditCardInvoiceItem> }) => {
+      if (useCloudflareCards) {
+        const normalized = normalizeItemUpdates(updates as Record<string, unknown>);
+        const response = await cloudflareCardsApi.updateItems([id], normalized) as { rows?: Array<{ invoice_id: string }> };
+        return response.rows?.[0] || { invoice_id: updates.invoice_id || '' };
+      }
+
       const { data, error } = await (supabase as any)
         .from('credit_card_invoice_items')
         .update(normalizeItemUpdates(updates))
@@ -506,6 +703,12 @@ export function useBulkUpdateCreditCardItems() {
   return useMutation({
     mutationFn: async ({ ids, updates }: { ids: string[]; updates: Record<string, unknown> }) => {
       const normalizedUpdates = normalizeItemUpdates({ ...updates, review_status: 'REVISADO' });
+
+      if (useCloudflareCards) {
+        const response = await cloudflareCardsApi.updateItems(ids, normalizedUpdates) as { rows?: Array<{ invoice_id: string }> };
+        return response.rows || [];
+      }
+
       const { data, error } = await (supabase as any)
         .from('credit_card_invoice_items')
         .update(normalizedUpdates)
@@ -544,6 +747,11 @@ export function useConvertCreditCardItemsToTransactions() {
   return useMutation({
     mutationFn: async ({ invoiceId, itemIds }: { invoiceId: string; itemIds: string[] }) => {
       if (itemIds.length === 0) throw new Error('Selecione pelo menos um item para converter.');
+
+      if (useCloudflareCards) {
+        await cloudflareCardsApi.previewTransactions([invoiceId]);
+        throw new Error('Conversão real de cartão para transações fica bloqueada até a Rodada 4. Por enquanto, use a aba Pré-lançamentos para conferir os itens prontos.');
+      }
 
       const { data: invoice, error: invoiceError } = await (supabase as any)
         .from('credit_card_invoices')

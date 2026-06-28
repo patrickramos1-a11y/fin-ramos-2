@@ -22,9 +22,13 @@ export type CardInvoiceItemPatch = Partial<{
 export const cloudflareCardsApi = {
   listInvoices: () => pilotApi.get("/api/cards/invoices"),
   createInvoice: (payload: unknown) => pilotApi.post("/api/cards/invoices", payload),
+  updateInvoice: (invoiceId: string, payload: unknown) => pilotApi.patch(`/api/cards/invoices/${invoiceId}`, payload),
+  deleteInvoice: (invoiceId: string) => pilotApi.delete(`/api/cards/invoices/${invoiceId}`),
   listInvoiceItems: (invoiceId: string) => pilotApi.get(`/api/cards/invoices/${invoiceId}/items`),
   updateItems: (ids: string[], patch: CardInvoiceItemPatch) =>
     pilotApi.patch("/api/cards/items/bulk", { ids, patch }),
+  listProfiles: () => pilotApi.get("/api/cards/profiles"),
+  saveProfile: (payload: unknown) => pilotApi.post("/api/cards/profiles", payload),
   listPersonalCategories: () => pilotApi.get("/api/cards/personal-categories"),
   createPersonalCategory: (payload: unknown) => pilotApi.post("/api/cards/personal-categories", payload),
   listMerchantRules: () => pilotApi.get("/api/cards/merchant-rules"),

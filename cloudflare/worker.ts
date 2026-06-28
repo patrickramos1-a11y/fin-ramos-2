@@ -135,13 +135,65 @@ async function dbCheck(env: Env) {
 
 async function listCardInvoices(env: Env) {
   const result = await env.DB.prepare(
-    `select *
+    `select *,
+            total_amount_cents / 100.0 as total_amount
        from credit_card_invoices
       order by competence_year desc, competence_month desc, created_at desc`,
   ).all();
 
   if (!result.success) return serverError("Unable to list card invoices", result.error);
   return jsonResponse({ ok: true, invoices: result.results ?? [] });
+}
+
+async function updateCardInvoice(request: Request, env: Env, invoiceId: string) {
+  const body = await readJson(request);
+  const updates = ((body.updates ?? body) as JsonRecord) ?? {};
+  const allowed = new Set(["invoice_label", "file_name", "holder", "status"]);
+  const statusMap: Record<string, string> = {
+    PRONTA: "FECHADA",
+    CONVERTIDA: "FECHADA",
+    ARQUIVADA: "CANCELADA",
+  };
+  const entries = Object.entries(updates)
+    .filter(([key, value]) => allowed.has(key) && value !== undefined)
+    .map(([key, value]) => [key, key === "status" ? statusMap[String(value)] ?? value : value] as const);
+
+  if (!entries.length) return badRequest("At least one allowed invoice field is required");
+
+  const setClause = entries.map(([key]) => `${key} = ?`).concat("updated_at = ?").join(", ");
+  const values = entries.map(([, value]) => value);
+  const result = await env.DB.prepare(`update credit_card_invoices set ${setClause} where id = ?`)
+    .bind(...values, nowIso(), invoiceId)
+    .run();
+
+  if (!result.success) return serverError("Unable to update card invoice", result.error);
+
+  const invoice = await env.DB.prepare(
+    "select *, total_amount_cents / 100.0 as total_amount from credit_card_invoices where id = ? limit 1",
+  )
+    .bind(invoiceId)
+    .first();
+
+  return jsonResponse({ ok: true, invoice });
+}
+
+async function deleteCardInvoice(env: Env, invoiceId: string) {
+  const converted = await env.DB.prepare(
+    "select count(*) as count from credit_card_invoice_items where invoice_id = ? and transaction_id is not null",
+  )
+    .bind(invoiceId)
+    .first<{ count: number }>();
+
+  if ((converted?.count ?? 0) > 0) {
+    return badRequest("This invoice has converted items and cannot be deleted automatically");
+  }
+
+  const result = await env.DB.prepare("delete from credit_card_invoices where id = ?")
+    .bind(invoiceId)
+    .run();
+
+  if (!result.success) return serverError("Unable to delete card invoice", result.error);
+  return jsonResponse({ ok: true, deleted: invoiceId });
 }
 
 async function createCardInvoice(request: Request, env: Env) {
@@ -252,7 +304,8 @@ async function createCardInvoice(request: Request, env: Env) {
 
 async function listCardInvoiceItems(env: Env, invoiceId: string) {
   const result = await env.DB.prepare(
-    `select *
+    `select *,
+            amount_cents / 100.0 as amount
        from credit_card_invoice_items
       where invoice_id = ?
       order by transaction_date asc, description asc`,
@@ -262,6 +315,70 @@ async function listCardInvoiceItems(env: Env, invoiceId: string) {
 
   if (!result.success) return serverError("Unable to list card invoice items", result.error);
   return jsonResponse({ ok: true, items: result.results ?? [] });
+}
+
+async function listCardProfiles(env: Env) {
+  const result = await env.DB.prepare(
+    `select *,
+            card_name || '::' || coalesce(card_final_digits, 'sem-final') as card_key,
+            case profile_type when 'NAO_CONFIGURADO' then 'DUVIDA' else profile_type end as usage_scope
+       from credit_card_profiles
+      where active = 1
+      order by card_name asc`,
+  ).all();
+
+  if (!result.success) return serverError("Unable to list card profiles", result.error);
+  return jsonResponse({ ok: true, profiles: result.results ?? [] });
+}
+
+async function upsertCardProfile(request: Request, env: Env) {
+  const body = await readJson(request);
+  const cardName = String(body.card_name ?? body.cardName ?? "").trim();
+  if (!cardName) return badRequest("card_name is required");
+
+  const cardFinalDigits = body.card_final_digits ?? body.cardFinalDigits ?? null;
+  const rawProfileType = String(body.profile_type ?? body.profileType ?? body.usage_scope ?? body.usageScope ?? "NAO_CONFIGURADO");
+  const profileType = rawProfileType === "DUVIDA" ? "NAO_CONFIGURADO" : rawProfileType;
+  const id = String(body.id ?? uuid());
+  const timestamp = nowIso();
+
+  const result = await env.DB.prepare(
+    `insert into credit_card_profiles (
+       id, card_name, card_final_digits, owner_name, profile_type, color, active, created_at, updated_at
+     ) values (?, ?, ?, ?, ?, ?, 1, ?, ?)
+     on conflict(card_name, card_final_digits) do update set
+       owner_name = excluded.owner_name,
+       profile_type = excluded.profile_type,
+       color = excluded.color,
+       active = 1,
+       updated_at = excluded.updated_at`,
+  )
+    .bind(
+      id,
+      cardName,
+      cardFinalDigits,
+      body.owner_name ?? body.ownerName ?? null,
+      profileType,
+      body.color ?? null,
+      timestamp,
+      timestamp,
+    )
+    .run();
+
+  if (!result.success) return serverError("Unable to save card profile", result.error);
+
+  const profile = await env.DB.prepare(
+    `select *,
+            card_name || '::' || coalesce(card_final_digits, 'sem-final') as card_key,
+            case profile_type when 'NAO_CONFIGURADO' then 'DUVIDA' else profile_type end as usage_scope
+       from credit_card_profiles
+      where card_name = ? and coalesce(card_final_digits, '') = coalesce(?, '')
+      limit 1`,
+  )
+    .bind(cardName, cardFinalDigits)
+    .first();
+
+  return jsonResponse({ ok: true, profile }, { status: 201 });
 }
 
 async function bulkPatchCardItems(request: Request, env: Env) {
@@ -287,6 +404,14 @@ async function bulkPatchCardItems(request: Request, env: Env) {
   if (!ids.length) return badRequest("At least one item id is required");
   if (!entries.length) return badRequest("At least one allowed patch field is required");
 
+  const affected = await env.DB.prepare(
+    `select distinct invoice_id
+       from credit_card_invoice_items
+      where id in (${bindList(ids)})`,
+  )
+    .bind(...ids)
+    .all<{ invoice_id: string }>();
+
   const setClause = entries.map(([key]) => `${key} = ?`).concat("updated_at = ?").join(", ");
   const values = entries.map(([, value]) => value);
   const timestamp = nowIso();
@@ -298,7 +423,7 @@ async function bulkPatchCardItems(request: Request, env: Env) {
     if (!result.success) return serverError("Unable to update card item", { id, error: result.error });
   }
 
-  return jsonResponse({ ok: true, updated: ids.length });
+  return jsonResponse({ ok: true, updated: ids.length, rows: affected.results ?? [] });
 }
 
 async function listPersonalCategories(env: Env) {
@@ -751,8 +876,24 @@ async function handleCards(request: Request, env: Env, segments: string[]) {
     return createCardInvoice(request, env);
   }
 
+  if (request.method === "PATCH" && segments.length === 3 && segments[1] === "invoices") {
+    return updateCardInvoice(request, env, segments[2]);
+  }
+
+  if (request.method === "DELETE" && segments.length === 3 && segments[1] === "invoices") {
+    return deleteCardInvoice(env, segments[2]);
+  }
+
   if (request.method === "GET" && segments.length === 4 && segments[1] === "invoices" && segments[3] === "items") {
     return listCardInvoiceItems(env, segments[2]);
+  }
+
+  if (request.method === "GET" && segments.join("/") === "cards/profiles") {
+    return listCardProfiles(env);
+  }
+
+  if (request.method === "POST" && segments.join("/") === "cards/profiles") {
+    return upsertCardProfile(request, env);
   }
 
   if (request.method === "PATCH" && segments.join("/") === "cards/items/bulk") {
