@@ -38,11 +38,13 @@ import {
 } from '@/lib/credit-card-fatura-parser';
 import {
   useBulkUpdateCreditCardItems,
+  useCreateCreditCardPersonalCategory,
   useConvertCreditCardItemsToTransactions,
   useCreditCardProfiles,
   useCreditCardInvoiceItems,
   useCreditCardInvoices,
   useCreditCardMerchantRules,
+  useCreditCardPersonalCategories,
   useDeleteCreditCardInvoice,
   useSaveCreditCardInvoice,
   useUpdateCreditCardInvoice,
@@ -52,9 +54,10 @@ import {
   type CreditCardInvoice,
   type CreditCardInvoiceItem,
   type CreditCardMerchantRule,
+  type CreditCardPersonalCategory,
   type CreditCardProfile,
 } from '@/hooks/useCreditCardInvoices';
-import { useTransactionCategories } from '@/hooks/useFinancialConfig';
+import { useAccounts, useTransactionCategories } from '@/hooks/useFinancialConfig';
 import { useClients } from '@/hooks/useTransactions';
 import { cn } from '@/lib/utils';
 
@@ -114,6 +117,11 @@ export function CreditCardInvoicesView() {
   const [sortKey, setSortKey] = useState<SortKey>('date');
   const [sortDirection, setSortDirection] = useState<SortDirection>('asc');
   const [bulkCategoryId, setBulkCategoryId] = useState('');
+  const [bulkPersonalCategoryId, setBulkPersonalCategoryId] = useState('');
+  const [categoryAccountFilter, setCategoryAccountFilter] = useState('ALL');
+  const [merchantRuleCategoryAccountFilter, setMerchantRuleCategoryAccountFilter] = useState('ALL');
+  const [newPersonalCategoryName, setNewPersonalCategoryName] = useState('');
+  const [newPersonalCategoryColor, setNewPersonalCategoryColor] = useState('#f59e0b');
   const [bulkScope, setBulkScope] = useState('');
   const [bulkConversionStatus, setBulkConversionStatus] = useState('');
 
@@ -121,6 +129,7 @@ export function CreditCardInvoicesView() {
   const { data: items = [], isLoading: itemsLoading } = useCreditCardInvoiceItems(selectedInvoiceId);
   const { data: savedMerchantRules = [] } = useCreditCardMerchantRules();
   const { data: cardProfiles = [] } = useCreditCardProfiles();
+  const { data: personalCategories = [] } = useCreditCardPersonalCategories();
 
   useEffect(() => {
     if (!selectedInvoiceId && invoices.length > 0) {
@@ -128,6 +137,7 @@ export function CreditCardInvoicesView() {
     }
   }, [invoices, selectedInvoiceId]);
   const { data: categories = [] } = useTransactionCategories();
+  const { data: accounts = [] } = useAccounts();
   const { data: clients = [] } = useClients();
   const saveInvoice = useSaveCreditCardInvoice();
   const updateInvoice = useUpdateCreditCardInvoice();
@@ -136,6 +146,7 @@ export function CreditCardInvoicesView() {
   const convertItems = useConvertCreditCardItemsToTransactions();
   const upsertMerchantRules = useUpsertCreditCardMerchantRules();
   const upsertCardProfile = useUpsertCreditCardProfile();
+  const createPersonalCategory = useCreateCreditCardPersonalCategory();
 
   const selectedParsedCards = useMemo<CreditCardStatementCard[]>(
     () => parsed ? parsed.cards.filter(card => selectedCards.has(card.id)) : [],
@@ -146,6 +157,18 @@ export function CreditCardInvoicesView() {
   const totalTx = selectedParsedCards.reduce((sum, card) => sum + card.transactions.length, 0);
   const ramosClient = useMemo(() => findRamosClient(clients as any[]), [clients]);
   const categoryById = useMemo(() => new Map((categories as any[]).map(category => [category.id, category])), [categories]);
+  const expenseCategories = useMemo(
+    () => (categories as any[]).filter(category => category.type === 'SAIDA' && category.active !== false),
+    [categories],
+  );
+  const bulkExpenseCategories = useMemo(
+    () => filterCategoriesByAccount(expenseCategories, categoryAccountFilter),
+    [expenseCategories, categoryAccountFilter],
+  );
+  const merchantExpenseCategories = useMemo(
+    () => filterCategoriesByAccount(expenseCategories, merchantRuleCategoryAccountFilter),
+    [expenseCategories, merchantRuleCategoryAccountFilter],
+  );
   const merchantRules = useMemo<MerchantRule[]>(
     () => (savedMerchantRules as CreditCardMerchantRule[]).map(rule => ({
       merchantKey: rule.merchant_key,
@@ -519,8 +542,17 @@ export function CreditCardInvoicesView() {
     const updates: Record<string, unknown> = {};
     if (bulkCategoryId) {
       Object.assign(updates, buildCategoryUpdates(bulkCategoryId, categoryById, ramosClient));
+      updates.personal_category_id = null;
     }
-    if (bulkScope) updates.usage_scope = bulkScope;
+    if (bulkPersonalCategoryId) {
+      updates.personal_category_id = bulkPersonalCategoryId;
+      updates.usage_scope = 'PESSOAL';
+      updates.conversion_status = 'IGNORADO';
+    }
+    if (bulkScope) {
+      updates.usage_scope = bulkScope;
+      if (bulkScope === 'EMPRESA') updates.personal_category_id = null;
+    }
     if (bulkConversionStatus) updates.conversion_status = bulkConversionStatus;
 
     const shouldAttachRamos = bulkScope === 'EMPRESA' || bulkConversionStatus === 'PRONTO';
@@ -544,10 +576,25 @@ export function CreditCardInvoicesView() {
       onSuccess: () => {
         setSelectedItems(new Set());
         setBulkCategoryId('');
+        setBulkPersonalCategoryId('');
         setBulkScope('');
         setBulkConversionStatus('');
       },
     });
+  };
+
+  const createPersonalCategoryFromInput = async () => {
+    const name = newPersonalCategoryName.trim();
+    if (!name) {
+      toast.error('Informe o nome da categoria pessoal.');
+      return;
+    }
+    const category = await createPersonalCategory.mutateAsync({
+      name,
+      color: newPersonalCategoryColor,
+    });
+    setBulkPersonalCategoryId(category.id);
+    setNewPersonalCategoryName('');
   };
 
   const saveMerchantPatternFromSelection = () => {
@@ -673,7 +720,21 @@ export function CreditCardInvoicesView() {
         <td className="px-2 py-1.5">{item.card_name} {item.card_final_digits ? `• ${item.card_final_digits}` : ''}</td>
         <td className="px-2 py-1.5"><ScopeBadge scope={item.usage_scope} /></td>
         <td className="px-2 py-1.5">
-          <Badge variant="secondary">{item.category_hint || 'Outros'}</Badge>
+          <div className="space-y-1">
+            {item.usage_scope === 'PESSOAL' ? (
+              <CategoryPill
+                label={item.credit_card_personal_categories?.name || item.category_hint || 'Sem categoria pessoal'}
+                color={item.credit_card_personal_categories?.color || '#f59e0b'}
+                helper="Pessoal"
+              />
+            ) : (
+              <CategoryPill
+                label={item.transaction_categories?.name || item.category_hint || 'Sem categoria empresa'}
+                color={item.transaction_categories?.color || '#ef4444'}
+                helper={categoryMetaLabel(item.transaction_categories)}
+              />
+            )}
+          </div>
           {ruleCategory && (
             <p className="mt-1 text-[10px] font-medium text-primary">Padrão: {ruleCategory.name}</p>
           )}
@@ -1142,19 +1203,42 @@ export function CreditCardInvoicesView() {
                     <SelectItem value="IGNORADO">Ignorar</SelectItem>
                   </SelectContent>
                 </Select>
-                <Select value={bulkCategoryId} onValueChange={setBulkCategoryId}>
-                  <SelectTrigger><SelectValue placeholder="Categoria" /></SelectTrigger>
+                <Select value={categoryAccountFilter} onValueChange={setCategoryAccountFilter}>
+                  <SelectTrigger><SelectValue placeholder="Filtrar por conta" /></SelectTrigger>
                   <SelectContent>
-                    {(categories as any[])
-                      .filter(category => category.type === 'SAIDA')
-                      .map(category => (
-                        <SelectItem key={category.id} value={category.id}>{category.name}</SelectItem>
-                      ))}
+                    <SelectItem value="ALL">Todas as contas</SelectItem>
+                    <SelectItem value="NONE">Sem conta padrão</SelectItem>
+                    {(accounts as any[]).map(account => (
+                      <SelectItem key={account.id} value={account.id}>{account.name}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <Select value={bulkCategoryId} onValueChange={setBulkCategoryId}>
+                  <SelectTrigger><SelectValue placeholder="Categoria da empresa" /></SelectTrigger>
+                  <SelectContent>
+                    {bulkExpenseCategories.map(category => (
+                      <SelectItem key={category.id} value={category.id}>
+                        <CategorySelectLabel category={category} />
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <Select value={bulkPersonalCategoryId} onValueChange={setBulkPersonalCategoryId}>
+                  <SelectTrigger><SelectValue placeholder="Categoria pessoal" /></SelectTrigger>
+                  <SelectContent>
+                    {(personalCategories as CreditCardPersonalCategory[]).map(category => (
+                      <SelectItem key={category.id} value={category.id}>
+                        <span className="inline-flex items-center gap-2">
+                          <span className="h-2.5 w-2.5 rounded-full" style={{ backgroundColor: category.color }} />
+                          {category.name}
+                        </span>
+                      </SelectItem>
+                    ))}
                   </SelectContent>
                 </Select>
                 <div className="rounded-lg border bg-white px-3 py-2 text-xs text-muted-foreground">
                   <p className="font-medium text-foreground">Regra automática</p>
-                  <p>Cliente: {ramosClient?.name || 'Ramos Engenharia'}. Conta e centro vêm da categoria. {merchantRules.length} padrão(ões) salvo(s).</p>
+                  <p>Empresa: conta e centro vêm da categoria. Pessoal: organiza a fatura e não vira transação.</p>
                 </div>
                 <Button variant="outline" onClick={exportVisibleItems} disabled={!activeInvoice || visibleItems.length === 0}>
                   <Download className="mr-2 h-4 w-4" />
@@ -1165,6 +1249,30 @@ export function CreditCardInvoicesView() {
                   Exportar selecionados
                 </Button>
               </div>
+              {cardViewMode === 'PESSOAL' && (
+                <div className="mt-3 rounded-2xl border border-amber-200 bg-amber-50/60 p-3">
+                  <p className="text-sm font-semibold text-amber-900">Categorias pessoais</p>
+                  <p className="text-xs text-amber-800/80">
+                    Use para organizar gastos pessoais sem criar lançamentos financeiros da empresa.
+                  </p>
+                  <div className="mt-3 grid gap-2 md:grid-cols-[1fr_140px_auto]">
+                    <Input
+                      value={newPersonalCategoryName}
+                      onChange={(event) => setNewPersonalCategoryName(event.target.value)}
+                      placeholder="Ex: Zenilda, Dodge, Viagens pessoais, Casa..."
+                    />
+                    <Input
+                      type="color"
+                      value={newPersonalCategoryColor}
+                      onChange={(event) => setNewPersonalCategoryColor(event.target.value)}
+                      className="h-10"
+                    />
+                    <Button onClick={createPersonalCategoryFromInput} disabled={createPersonalCategory.isPending}>
+                      Criar categoria pessoal
+                    </Button>
+                  </div>
+                </div>
+              )}
             </div>
 
             {categorySummary.length > 0 && (
@@ -1289,15 +1397,28 @@ export function CreditCardInvoicesView() {
               </p>
             </div>
             <div>
+              <p className="mb-2 text-sm font-medium">Filtrar categoria por conta</p>
+              <Select value={merchantRuleCategoryAccountFilter} onValueChange={setMerchantRuleCategoryAccountFilter}>
+                <SelectTrigger><SelectValue placeholder="Todas as contas" /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="ALL">Todas as contas</SelectItem>
+                  <SelectItem value="NONE">Sem conta padrão</SelectItem>
+                  {(accounts as any[]).map(account => (
+                    <SelectItem key={account.id} value={account.id}>{account.name}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div>
               <p className="mb-2 text-sm font-medium">Categoria padrão</p>
               <Select value={merchantRuleCategoryId} onValueChange={setMerchantRuleCategoryId}>
                 <SelectTrigger><SelectValue placeholder="Selecionar categoria" /></SelectTrigger>
                 <SelectContent>
-                  {(categories as any[])
-                    .filter(category => category.type === 'SAIDA')
-                    .map(category => (
-                      <SelectItem key={category.id} value={category.id}>{category.name}</SelectItem>
-                    ))}
+                  {merchantExpenseCategories.map(category => (
+                    <SelectItem key={category.id} value={category.id}>
+                      <CategorySelectLabel category={category} />
+                    </SelectItem>
+                  ))}
                 </SelectContent>
               </Select>
             </div>
@@ -1542,6 +1663,44 @@ function Mini({ label, value, strong }: { label: string; value: string; strong?:
   );
 }
 
+function CategorySelectLabel({ category }: { category: any }) {
+  return (
+    <span className="flex items-center gap-2">
+      <span className="h-2.5 w-2.5 rounded-full" style={{ backgroundColor: category.color || '#ef4444' }} />
+      <span className="flex min-w-0 flex-col">
+        <span className="truncate font-medium">{category.name}</span>
+        <span className="truncate text-[10px] text-muted-foreground">
+          {categoryMetaLabel(category)}
+          {category.default_account?.name ? ` · ${category.default_account.name}` : category.default_account_id ? ' · conta vinculada' : ' · sem conta'}
+        </span>
+      </span>
+    </span>
+  );
+}
+
+function CategoryPill({ label, color, helper }: { label: string; color?: string | null; helper?: string | null }) {
+  return (
+    <span className="inline-flex max-w-[220px] items-center gap-2 rounded-full bg-muted px-2.5 py-1 text-xs">
+      <span className="h-2.5 w-2.5 shrink-0 rounded-full" style={{ backgroundColor: color || '#64748b' }} />
+      <span className="truncate font-medium">{label}</span>
+      {helper && <span className="shrink-0 text-[10px] text-muted-foreground">{helper}</span>}
+    </span>
+  );
+}
+
+function categoryMetaLabel(category?: any | null) {
+  if (!category) return '';
+  const subtype = category.subtype ? String(category.subtype).toLowerCase() : 'despesa';
+  const expenseType = category.expense_type ? String(category.expense_type).toLowerCase() : '';
+  return [subtype, expenseType].filter(Boolean).join(' · ');
+}
+
+function filterCategoriesByAccount(categories: any[], accountId: string) {
+  if (accountId === 'ALL') return categories;
+  if (accountId === 'NONE') return categories.filter(category => !category.default_account_id);
+  return categories.filter(category => category.default_account_id === accountId);
+}
+
 function defaultInvoiceName(parsed: ParsedCreditCardStatement, fileName: string, month: number, year: number) {
   const holder = parsed.meta.holder ? ` - ${parsed.meta.holder}` : '';
   const source = parsed.meta.invoice || fileName.replace(/\.(xlsx|xls)$/i, '') || 'Fatura';
@@ -1673,7 +1832,9 @@ function groupItemsByCard(items: CreditCardInvoiceItem[]) {
 function groupItemsByCategory(items: CreditCardInvoiceItem[]) {
   const map = new Map<string, { key: string; label: string; total: number; count: number; empresa: number; pessoal: number; reembolso: number }>();
   for (const item of items) {
-    const label = item.transaction_categories?.name || item.category_hint || 'Sem categoria';
+    const label = item.usage_scope === 'PESSOAL'
+      ? item.credit_card_personal_categories?.name || item.category_hint || 'Sem categoria pessoal'
+      : item.transaction_categories?.name || item.category_hint || 'Sem categoria empresa';
     const current = map.get(label) || { key: label, label, total: 0, count: 0, empresa: 0, pessoal: 0, reembolso: 0 };
     const amount = Number(item.amount) || 0;
     current.total += amount;

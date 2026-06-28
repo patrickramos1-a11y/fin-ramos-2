@@ -1,5 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
+import { cloudflareContractsApi } from '@/lib/cloudflarePilotApi';
 
 export type ContractorType = 'pessoa_fisica' | 'pessoa_juridica';
 export type ContractDocumentStatus = 'rascunho' | 'em_revisao' | 'aguardando_aceite' | 'aceito' | 'cancelado';
@@ -102,6 +103,35 @@ export interface ContractCreationInput {
 }
 
 const onlyDigits = (value: string) => value.replace(/\D/g, '');
+const useCloudflareContracts =
+  import.meta.env.VITE_FIN_BACKEND !== 'supabase' ||
+  import.meta.env.VITE_USE_CLOUDFLARE_PILOT === 'true';
+
+function mapCloudflareDocument(row: any): ContractDocument {
+  return {
+    ...row,
+    plan_value: row.plan_value ?? (typeof row.plan_value_cents === 'number' ? row.plan_value_cents / 100 : null),
+    digital_snapshot: typeof row.digital_snapshot === 'string'
+      ? safeParseJson(row.digital_snapshot, {})
+      : row.digital_snapshot ?? {},
+  } as ContractDocument;
+}
+
+function mapCloudflareLink(row: any): AcceptanceLink {
+  return {
+    ...row,
+    status: row.status === 'ativo' ? 'aguardando' : row.status,
+    user_agent: row.user_agent ?? row.accepted_user_agent ?? null,
+  } as AcceptanceLink;
+}
+
+function safeParseJson<T>(value: string, fallback: T): T {
+  try {
+    return JSON.parse(value) as T;
+  } catch {
+    return fallback;
+  }
+}
 
 export function formatCpfCnpj(value: string) {
   const digits = onlyDigits(value);
@@ -153,8 +183,13 @@ export function isValidCnpj(value: string) {
 
 export function useContractTemplates() {
   return useQuery({
-    queryKey: ['contract-templates'],
+    queryKey: ['contract-templates', useCloudflareContracts ? 'cloudflare' : 'supabase'],
     queryFn: async () => {
+      if (useCloudflareContracts) {
+        const response = await cloudflareContractsApi.listTemplates() as { templates?: ContractTemplate[] };
+        return response.templates || [];
+      }
+
       const { data, error } = await supabase
         .from('contract_templates' as any)
         .select('*')
@@ -168,9 +203,14 @@ export function useContractTemplates() {
 
 export function useContractClauses(templateId?: string | null) {
   return useQuery({
-    queryKey: ['contract-clauses', templateId],
+    queryKey: ['contract-clauses', templateId, useCloudflareContracts ? 'cloudflare' : 'supabase'],
     enabled: !!templateId,
     queryFn: async () => {
+      if (useCloudflareContracts) {
+        const response = await cloudflareContractsApi.listTemplateClauses(templateId as string) as { clauses?: ContractClause[] };
+        return response.clauses || [];
+      }
+
       const { data, error } = await supabase
         .from('contract_clauses' as any)
         .select('*')
@@ -185,8 +225,13 @@ export function useContractClauses(templateId?: string | null) {
 
 export function useContractDocuments() {
   return useQuery({
-    queryKey: ['contract-documents'],
+    queryKey: ['contract-documents', useCloudflareContracts ? 'cloudflare' : 'supabase'],
     queryFn: async () => {
+      if (useCloudflareContracts) {
+        const response = await cloudflareContractsApi.listDocuments() as { documents?: any[] };
+        return (response.documents || []).map(mapCloudflareDocument);
+      }
+
       const { data, error } = await supabase
         .from('contract_documents' as any)
         .select('*')
@@ -199,9 +244,14 @@ export function useContractDocuments() {
 
 export function useContractDocumentClauses(documentId?: string | null) {
   return useQuery({
-    queryKey: ['contract-document-clauses', documentId],
+    queryKey: ['contract-document-clauses', documentId, useCloudflareContracts ? 'cloudflare' : 'supabase'],
     enabled: !!documentId,
     queryFn: async () => {
+      if (useCloudflareContracts) {
+        const response = await cloudflareContractsApi.listDocumentClauses(documentId as string) as { clauses?: ContractDocumentClause[] };
+        return response.clauses || [];
+      }
+
       const { data, error } = await supabase
         .from('contract_document_clauses' as any)
         .select('*')
@@ -223,6 +273,50 @@ export function useCreateContractDocument() {
       }
       if (input.contractorType === 'pessoa_juridica' && !isValidCnpj(input.contractorDocument)) {
         throw new Error('CNPJ inválido. Confira os números informados.');
+      }
+
+      if (useCloudflareContracts) {
+        const response = await cloudflareContractsApi.createDocument({
+          template_id: input.templateId,
+          contractor_type: input.contractorType,
+          contractor_name: input.contractorName,
+          contractor_document: formatCpfCnpj(input.contractorDocument),
+          contractor_email: input.contractorEmail || null,
+          contractor_phone: input.contractorPhone || null,
+          contractor_address: input.contractorAddress || null,
+          contractor_responsible: input.contractorResponsible || null,
+          plan_name: input.planName || null,
+          plan_value: input.planValue || null,
+          payment_terms: input.paymentTerms || null,
+          start_date: input.startDate || null,
+          end_date: input.endDate || null,
+          selected_clause_ids: input.selectedClauseIds,
+          title: `Contrato Digital - ${input.contractorName}`,
+        }) as { document?: { id: string } };
+
+        return {
+          id: response.document?.id,
+          template_id: input.templateId,
+          title: `Contrato Digital - ${input.contractorName}`,
+          status: 'rascunho',
+          contractor_type: input.contractorType,
+          contractor_name: input.contractorName,
+          contractor_document: formatCpfCnpj(input.contractorDocument),
+          contractor_email: input.contractorEmail || null,
+          contractor_phone: input.contractorPhone || null,
+          contractor_address: input.contractorAddress || null,
+          contractor_responsible: input.contractorResponsible || null,
+          plan_name: input.planName || null,
+          plan_value: input.planValue || null,
+          payment_terms: input.paymentTerms || null,
+          start_date: input.startDate || null,
+          end_date: input.endDate || null,
+          digital_snapshot: {},
+          accepted_at: null,
+          created_by: null,
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+        } as ContractDocument;
       }
 
       const { data: template, error: templateError } = await supabase
@@ -318,6 +412,11 @@ export function useCreateAcceptanceLink() {
 
   return useMutation({
     mutationFn: async (documentId: string) => {
+      if (useCloudflareContracts) {
+        const response = await cloudflareContractsApi.createAcceptanceLink(documentId) as { link?: any };
+        return mapCloudflareLink(response.link);
+      }
+
       const token = crypto.randomUUID().replace(/-/g, '');
       const expiresAt = new Date();
       expiresAt.setDate(expiresAt.getDate() + 15);
@@ -357,6 +456,11 @@ export function useUpdateContractClause() {
       templateId: string;
       updates: Partial<Pick<ContractClause, 'title' | 'body' | 'display_order' | 'active'>>;
     }) => {
+      if (useCloudflareContracts) {
+        const response = await cloudflareContractsApi.updateClause(input.id, { updates: input.updates }) as { clause?: ContractClause };
+        return response.clause as ContractClause;
+      }
+
       const { data, error } = await supabase
         .from('contract_clauses' as any)
         .update({
@@ -381,6 +485,21 @@ export function useAcceptanceBundle(token?: string) {
     queryKey: ['contract-acceptance-bundle', token],
     enabled: !!token,
     queryFn: async () => {
+      if (useCloudflareContracts) {
+        const response = await cloudflareContractsApi.getPublicAcceptance(token as string) as {
+          link?: any;
+          document?: any;
+          clauses?: ContractDocumentClause[];
+        };
+        if (!response.link || !response.document) throw new Error('Link de aceite não encontrado ou expirado.');
+
+        return {
+          link: mapCloudflareLink(response.link),
+          document: mapCloudflareDocument(response.document),
+          clauses: response.clauses || [],
+        };
+      }
+
       const { data: link, error: linkError } = await supabase
         .from('contract_acceptance_links' as any)
         .select('*')
@@ -425,6 +544,20 @@ export function useAcceptContract() {
       const acceptedAt = new Date().toISOString();
       const formattedDocument = formatCpfCnpj(input.documentNumber);
       const userAgent = navigator.userAgent;
+
+      if (useCloudflareContracts) {
+        await cloudflareContractsApi.acceptPublicContract(input.link.token, {
+          accepted_name: input.name,
+          accepted_document: formattedDocument,
+          accepted_email: input.email,
+          metadata: {
+            source: 'public_acceptance_page',
+            accepted_at: acceptedAt,
+            user_agent: userAgent,
+          },
+        });
+        return { acceptedAt };
+      }
 
       const { error: linkError } = await supabase
         .from('contract_acceptance_links' as any)

@@ -41,6 +41,7 @@ export type CreditCardInvoiceItem = {
   amount: number;
   category_hint: string | null;
   transaction_category_id: string | null;
+  personal_category_id?: string | null;
   account_id: string | null;
   cliente_id: string | null;
   cost_center_id: string | null;
@@ -53,11 +54,21 @@ export type CreditCardInvoiceItem = {
   reimbursement_notes?: string | null;
   transaction_id: string | null;
   converted_at: string | null;
-  transaction_categories?: { id?: string; name: string; color?: string | null; default_account_id?: string | null; cost_center_id?: string | null } | null;
+  transaction_categories?: { id?: string; name: string; color?: string | null; subtype?: string | null; expense_type?: string | null; default_account_id?: string | null; cost_center_id?: string | null } | null;
+  credit_card_personal_categories?: CreditCardPersonalCategory | null;
   accounts?: { id: string; name: string } | null;
   recurring_clients?: { id: string; name: string } | null;
   cost_centers?: { id: string; name: string } | null;
   financial_entities?: { id: string; name: string } | null;
+};
+
+export type CreditCardPersonalCategory = {
+  id: string;
+  name: string;
+  color: string;
+  active: boolean;
+  created_at: string;
+  updated_at: string;
 };
 
 export type CreditCardMerchantRule = {
@@ -182,6 +193,54 @@ export function useCreditCardMerchantRules() {
   });
 }
 
+export function useCreditCardPersonalCategories() {
+  return useQuery({
+    queryKey: ['credit-card-personal-categories'],
+    queryFn: async () => {
+      const { data, error } = await (supabase as any)
+        .from('credit_card_personal_categories')
+        .select('*')
+        .eq('active', true)
+        .order('name', { ascending: true });
+      if (error) {
+        if (isMissingPersonalCategoriesSchema(error)) return [] as CreditCardPersonalCategory[];
+        throw error;
+      }
+      return (data || []) as CreditCardPersonalCategory[];
+    },
+  });
+}
+
+export function useCreateCreditCardPersonalCategory() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: async ({ name, color }: { name: string; color?: string }) => {
+      const cleanName = name.trim();
+      if (!cleanName) throw new Error('Informe o nome da categoria pessoal.');
+      const { data, error } = await (supabase as any)
+        .from('credit_card_personal_categories')
+        .insert({ name: cleanName, color: color || '#f59e0b', active: true })
+        .select('*')
+        .single();
+      if (error) {
+        if (isMissingPersonalCategoriesSchema(error)) {
+          throw new Error('A tabela de categorias pessoais do cartão ainda não existe no Supabase. Aplique a migration credit_card_personal_categories.');
+        }
+        throw error;
+      }
+      return data as CreditCardPersonalCategory;
+    },
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ['credit-card-personal-categories'] });
+      toast.success('Categoria pessoal criada.');
+    },
+    onError: (error: any) => {
+      toast.error('Erro ao criar categoria pessoal: ' + (error?.message || ''));
+    },
+  });
+}
+
 export function useUpsertCreditCardMerchantRules() {
   const queryClient = useQueryClient();
 
@@ -224,7 +283,8 @@ export function useCreditCardInvoiceItems(invoiceId?: string | null) {
         .from('credit_card_invoice_items')
         .select(`
           *,
-          transaction_categories:transaction_category_id(id, name, color, default_account_id, cost_center_id),
+          transaction_categories:transaction_category_id(id, name, color, subtype, expense_type, default_account_id, cost_center_id),
+          credit_card_personal_categories:personal_category_id(id, name, color, active, created_at, updated_at),
           accounts:account_id(id, name),
           recurring_clients:cliente_id(id, name),
           cost_centers:cost_center_id(id, name),
@@ -608,12 +668,20 @@ function normalizeItemUpdates(updates: Record<string, unknown>) {
   const next = { ...updates };
   if (next.usage_scope === 'PESSOAL') {
     next.conversion_status = 'IGNORADO';
+    delete next.transaction_category_id;
+    delete next.account_id;
+    delete next.cost_center_id;
+    delete next.cliente_id;
+  }
+  if (next.usage_scope === 'EMPRESA') {
+    delete next.personal_category_id;
   }
   if (next.conversion_status === 'IGNORADO') {
     next.review_status = 'IGNORADO';
   }
   if (next.conversion_status === 'PRONTO') {
     next.usage_scope = 'EMPRESA';
+    delete next.personal_category_id;
   }
   return next;
 }
@@ -628,6 +696,7 @@ function normalizeLegacyItemUpdates(updates: Record<string, unknown>) {
   delete next.converted_at;
   delete next.reimbursement_status;
   delete next.reimbursement_notes;
+  delete next.personal_category_id;
 
   if (updates.usage_scope === 'PESSOAL' || updates.conversion_status === 'IGNORADO') {
     next.review_status = 'IGNORADO';
@@ -649,6 +718,8 @@ function normalizeFetchedItems(items: any[]): CreditCardInvoiceItem[] {
     ),
     cliente_id: item.cliente_id || null,
     cost_center_id: item.cost_center_id || item.transaction_categories?.cost_center_id || null,
+    personal_category_id: item.personal_category_id || null,
+    credit_card_personal_categories: item.credit_card_personal_categories || null,
     transaction_id: item.transaction_id || null,
     converted_at: item.converted_at || null,
     reimbursement_status: item.reimbursement_status || 'NAO_APLICA',
@@ -658,7 +729,7 @@ function normalizeFetchedItems(items: any[]): CreditCardInvoiceItem[] {
 
 function isMissingCreditCardWorkflowSchema(error: any) {
   const message = `${error?.message || ''} ${error?.details || ''} ${error?.hint || ''}`;
-  return /conversion_status|usage_scope|cliente_id|cost_center_id|converted_at|reimbursement_status|reimbursement_notes|schema cache/i.test(message);
+  return /conversion_status|usage_scope|cliente_id|cost_center_id|converted_at|reimbursement_status|reimbursement_notes|personal_category_id|credit_card_personal_categories|schema cache/i.test(message);
 }
 
 function isMissingMerchantRulesSchema(error: any) {
@@ -669,6 +740,11 @@ function isMissingMerchantRulesSchema(error: any) {
 function isMissingCardProfilesSchema(error: any) {
   const message = `${error?.message || ''} ${error?.details || ''} ${error?.hint || ''}`;
   return /credit_card_profiles|schema cache/i.test(message);
+}
+
+function isMissingPersonalCategoriesSchema(error: any) {
+  const message = `${error?.message || ''} ${error?.details || ''} ${error?.hint || ''}`;
+  return /credit_card_personal_categories|personal_category_id|schema cache/i.test(message);
 }
 
 export function buildCreditCardProfileKey(cardName: string, finalDigits?: string | null) {

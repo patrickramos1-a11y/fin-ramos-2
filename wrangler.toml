@@ -1,0 +1,39 @@
+name = "fin-ramos-api"
+main = "cloudflare/worker.ts"
+compatibility_date = "2026-06-26"
+workers_dev = true
+
+[observability]
+enabled = true
+
+[[d1_databases]]
+binding = "DB"
+database_name = "fin-ramos-dev"
+database_id = "df4271fc-7646-418c-8e71-4503bc89f2d1"
+migrations_dir = "cloudflare/migrations"
+
+[[r2_buckets]]
+binding = "FILES"
+bucket_name = "fin-ramos-files-dev"
+
+[vars]
+APP_ENV = "development"
+APP_VERSION = "0.0.0-cloudflare-pilot"
+
+[env.production]
+name = "fin-ramos-api-production"
+workers_dev = true
+
+[[env.production.d1_databases]]
+binding = "DB"
+database_name = "fin-ramos-prod"
+database_id = "e5042bed-6c68-4d0b-92e7-5f838666eb71"
+migrations_dir = "cloudflare/migrations"
+
+[[env.production.r2_buckets]]
+binding = "FILES"
+bucket_name = "fin-ramos-files-prod"
+
+[env.production.vars]
+APP_ENV = "production"
+APP_VERSION = "0.0.0-cloudflare-pilot"

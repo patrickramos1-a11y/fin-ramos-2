@@ -7,6 +7,12 @@
     "dev": "vite",
     "build": "vite build",
     "build:dev": "vite build --mode development",
+    "cloudflare:dev": "wrangler dev",
+    "cloudflare:deploy": "wrangler deploy",
+    "cloudflare:deploy:prod": "wrangler deploy --env production",
+    "d1:migrate:local": "wrangler d1 migrations apply fin-ramos-dev --local",
+    "d1:migrate:prod": "wrangler d1 migrations apply fin-ramos-prod --remote",
+    "d1:seed": "wrangler d1 execute fin-ramos-dev --local --file cloudflare/migrations/0001_foundation.sql",
     "lint": "eslint .",
     "preview": "vite preview",
     "test": "vitest run",
@@ -86,6 +92,7 @@
     "typescript": "^5.8.3",
     "typescript-eslint": "^8.38.0",
     "vite": "^5.4.19",
-    "vitest": "^3.2.4"
+    "vitest": "^3.2.4",
+    "wrangler": "^4.105.0"
   }
 }
