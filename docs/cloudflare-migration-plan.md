@@ -381,7 +381,7 @@ Use este checklist como marcador de andamento.
 
 - [x] Rodada 1 concluida: diagnostico e arquitetura-alvo.
 - [x] Rodada 2 concluida: fundacao Cloudflare paralela.
-- [ ] Rodada 3 concluida: piloto Cartao e Contratos Digitais. Base tecnica criada; falta ligar telas reais e R2.
+- [ ] Rodada 3 concluida: piloto Cartao e Contratos Digitais. Base tecnica criada; auditoria/paridade local criada; falta ativar Worker publico, importar dados reais para D1 e validar paridade.
 - [ ] Rodada 4 concluida: financeiro principal migrado e auditado.
 - [ ] Rodada 5 concluida: corte final e operacao Cloudflare.
 
@@ -393,7 +393,7 @@ Atualize esta secao ao fim de cada rodada.
 | --- | --- | --- | --- |
 | 1 | Diagnostico inicial concluido | 2026-06-26 | Ver `docs/cloudflare-migration-rodada-1-diagnostico.md`. Nenhuma migracao executada ainda. |
 | 2 | Concluida | 2026-06-26 | D1/R2 criados, migration inicial aplicada, Worker dev publicado e endpoints basicos validados. Worker prod criado; falta rota/dominio para acesso publico. Ver `docs/cloudflare-migration-rodada-2-fundacao.md`. |
-| 3 | Em andamento | 2026-06-27 | Schema D1, endpoints Worker e smoke tests de Cartao/Contratos criados. Falta ligar telas reais e R2. Ver `docs/cloudflare-migration-rodada-3-piloto.md`. |
+| 3 | Em andamento / bloqueada no portao de paridade | 2026-07-01 | Endpoints de auditoria e script `migration:parity` criados. Supabase respondeu com 3 faturas, 716 itens, 2 perfis, 15 regras e 8 categorias pessoais. Build e dry-run do Worker passaram, mas a URL publica ainda retorna 404 para `/api/migration/*`; antes da Rodada 4 falta ativar/publicar Worker, importar dados reais para D1 e comprovar paridade. Ver `docs/cloudflare-migration-execucao-unificada.md`. |
 | 4 | Nao iniciada | - | - |
 | 5 | Nao iniciada | - | - |
 

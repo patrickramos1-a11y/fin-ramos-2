@@ -29,6 +29,7 @@ type Env = {
   FILES: R2Bucket;
   APP_ENV?: string;
   APP_VERSION?: string;
+  MIGRATION_AUDIT_TOKEN?: string;
 };
 
 type JsonRecord = Record<string, unknown>;
@@ -66,6 +67,10 @@ function badRequest(message: string, details?: unknown) {
 
 function serverError(message: string, details?: unknown) {
   return jsonResponse({ ok: false, error: "server_error", message, details }, { status: 500 });
+}
+
+function forbidden(message = "Migration audit token is required") {
+  return jsonResponse({ ok: false, error: "forbidden", message }, { status: 403 });
 }
 
 function nowIso() {
@@ -115,6 +120,25 @@ function normalizeMerchant(description: unknown) {
 
 function bindList(values: unknown[]) {
   return values.length ? values.map(() => "?").join(", ") : "null";
+}
+
+function requireMigrationAccess(request: Request, env: Env) {
+  const token = env.MIGRATION_AUDIT_TOKEN;
+
+  if (!token && env.APP_ENV !== "production") return null;
+  if (!token) return forbidden("MIGRATION_AUDIT_TOKEN is not configured for this environment");
+
+  const authorization = request.headers.get("authorization") ?? "";
+  const bearer = authorization.startsWith("Bearer ") ? authorization.slice("Bearer ".length).trim() : "";
+  const headerToken = request.headers.get("x-migration-token") ?? bearer;
+
+  return headerToken === token ? null : forbidden();
+}
+
+async function runRows<T = JsonRecord>(env: Env, query: string, bindValues: unknown[] = []) {
+  const result = await env.DB.prepare(query).bind(...bindValues).all<T>();
+  if (!result.success) throw new Error(result.error ?? "D1 summary query failed");
+  return result.results ?? [];
 }
 
 async function dbCheck(env: Env) {
@@ -867,6 +891,130 @@ async function acceptPublicContract(request: Request, env: Env, token: string) {
   return jsonResponse({ ok: true, accepted_at: timestamp });
 }
 
+async function cardsMigrationSummary(env: Env) {
+  const invoiceTotals = await runRows<{
+    invoice_count: number;
+    total_amount_cents: number;
+    total_transactions: number;
+  }>(
+    env,
+    `select count(*) as invoice_count,
+            coalesce(sum(total_amount_cents), 0) as total_amount_cents,
+            coalesce(sum(total_transactions), 0) as total_transactions
+       from credit_card_invoices`,
+  );
+
+  const itemTotals = await runRows<{
+    item_count: number;
+    total_amount_cents: number;
+    converted_count: number;
+    ready_count: number;
+    missing_category_count: number;
+  }>(
+    env,
+    `select count(*) as item_count,
+            coalesce(sum(amount_cents), 0) as total_amount_cents,
+            sum(case when conversion_status = 'CONVERTIDO' then 1 else 0 end) as converted_count,
+            sum(case when conversion_status = 'PRONTO' then 1 else 0 end) as ready_count,
+            sum(case when usage_scope = 'EMPRESA' and transaction_category_id is null then 1 else 0 end) as missing_category_count
+       from credit_card_invoice_items`,
+  );
+
+  const [profiles, merchantRules, personalCategories, byInvoiceStatus, byItemScope, byConversionStatus, byMonth] =
+    await Promise.all([
+      runRows(env, `select profile_type, count(*) as count from credit_card_profiles group by profile_type order by profile_type`),
+      runRows(env, `select count(*) as count from credit_card_merchant_rules where active = 1`),
+      runRows(env, `select count(*) as count from credit_card_personal_categories where active = 1`),
+      runRows(env, `select status, count(*) as count, coalesce(sum(total_amount_cents), 0) as total_amount_cents from credit_card_invoices group by status order by status`),
+      runRows(env, `select usage_scope, count(*) as count, coalesce(sum(amount_cents), 0) as total_amount_cents from credit_card_invoice_items group by usage_scope order by usage_scope`),
+      runRows(env, `select conversion_status, count(*) as count, coalesce(sum(amount_cents), 0) as total_amount_cents from credit_card_invoice_items group by conversion_status order by conversion_status`),
+      runRows(env, `select competence_year, competence_month, count(*) as invoice_count, coalesce(sum(total_amount_cents), 0) as total_amount_cents, coalesce(sum(total_transactions), 0) as total_transactions from credit_card_invoices group by competence_year, competence_month order by competence_year, competence_month`),
+    ]);
+
+  return jsonResponse({
+    ok: true,
+    source: "cloudflare_d1",
+    generated_at: nowIso(),
+    cards: {
+      totals: {
+        invoices: invoiceTotals[0] ?? { invoice_count: 0, total_amount_cents: 0, total_transactions: 0 },
+        items: itemTotals[0] ?? {
+          item_count: 0,
+          total_amount_cents: 0,
+          converted_count: 0,
+          ready_count: 0,
+          missing_category_count: 0,
+        },
+      },
+      by_invoice_status: byInvoiceStatus,
+      by_item_scope: byItemScope,
+      by_conversion_status: byConversionStatus,
+      by_month: byMonth,
+      profiles,
+      merchant_rules: merchantRules[0] ?? { count: 0 },
+      personal_categories: personalCategories[0] ?? { count: 0 },
+    },
+  });
+}
+
+async function contractsMigrationSummary(env: Env) {
+  const [templates, clauses, documents, clausesFrozen, links, events, documentsByStatus, documentsByType] =
+    await Promise.all([
+      runRows(env, `select count(*) as count from contract_templates where active = 1`),
+      runRows(env, `select count(*) as count from contract_clauses where active = 1`),
+      runRows(env, `select count(*) as count, coalesce(sum(plan_value_cents), 0) as plan_value_cents from contract_documents`),
+      runRows(env, `select count(*) as count from contract_document_clauses`),
+      runRows(env, `select status, count(*) as count from contract_acceptance_links group by status order by status`),
+      runRows(env, `select event_type, count(*) as count from contract_acceptance_events group by event_type order by event_type`),
+      runRows(env, `select status, count(*) as count, coalesce(sum(plan_value_cents), 0) as plan_value_cents from contract_documents group by status order by status`),
+      runRows(env, `select contractor_type, count(*) as count from contract_documents group by contractor_type order by contractor_type`),
+    ]);
+
+  return jsonResponse({
+    ok: true,
+    source: "cloudflare_d1",
+    generated_at: nowIso(),
+    contracts: {
+      templates: templates[0] ?? { count: 0 },
+      reusable_clauses: clauses[0] ?? { count: 0 },
+      documents: documents[0] ?? { count: 0, plan_value_cents: 0 },
+      frozen_clauses: clausesFrozen[0] ?? { count: 0 },
+      acceptance_links_by_status: links,
+      acceptance_events_by_type: events,
+      documents_by_status: documentsByStatus,
+      documents_by_contractor_type: documentsByType,
+    },
+  });
+}
+
+async function handleMigration(request: Request, env: Env, segments: string[]) {
+  const accessError = requireMigrationAccess(request, env);
+  if (accessError) return accessError;
+
+  if (request.method === "GET" && segments.join("/") === "migration/cards/summary") {
+    return cardsMigrationSummary(env);
+  }
+
+  if (request.method === "GET" && segments.join("/") === "migration/contracts/summary") {
+    return contractsMigrationSummary(env);
+  }
+
+  if (request.method === "GET" && segments.join("/") === "migration/status") {
+    return jsonResponse({
+      ok: true,
+      source: "cloudflare_d1",
+      generated_at: nowIso(),
+      checks: [
+        "cards_summary",
+        "contracts_summary",
+        "supabase_parity_script_required",
+        "no_cutover_without_parity",
+      ],
+    });
+  }
+
+  return null;
+}
 async function handleCards(request: Request, env: Env, segments: string[]) {
   if (request.method === "GET" && segments.length === 2 && segments[1] === "invoices") {
     return listCardInvoices(env);
@@ -983,7 +1131,7 @@ export default {
         headers: {
           "access-control-allow-origin": "*",
           "access-control-allow-methods": "GET,POST,PATCH,DELETE,OPTIONS",
-          "access-control-allow-headers": "content-type,authorization",
+          "access-control-allow-headers": "content-type,authorization,x-migration-token",
         },
       });
     }
@@ -1011,6 +1159,12 @@ export default {
       }
 
       const segments = url.pathname.replace(/^\/api\/?/, "").split("/").filter(Boolean);
+
+      if (segments[0] === "migration") {
+        const response = await handleMigration(request, env, segments);
+        if (response) return response;
+      }
+
       const publicResponse = await handlePublicContracts(request, env, segments);
       if (publicResponse) return publicResponse;
 
