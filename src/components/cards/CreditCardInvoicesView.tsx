@@ -801,7 +801,8 @@ export function CreditCardInvoicesView() {
 
   return (
     <div className="space-y-6">
-      <Card className="border-primary/20 bg-gradient-to-r from-emerald-50 to-white">
+      {!managerOpen && (
+        <Card className="border-primary/20 bg-gradient-to-r from-emerald-50 to-white">
         <CardHeader>
           <CardTitle className="flex items-center gap-2">
             <CreditCard className="w-5 h-5 text-primary" />
@@ -869,8 +870,9 @@ export function CreditCardInvoicesView() {
           </div>
         </CardContent>
       </Card>
+      )}
 
-      {parsed && (
+      {parsed && !managerOpen && (
         <Card className="border-primary/10 bg-gradient-to-r from-emerald-50/70 via-white to-white">
           <CardHeader>
             <CardTitle className="text-lg">Cartões detectados</CardTitle>
@@ -1098,7 +1100,31 @@ export function CreditCardInvoicesView() {
               </Button>
             </div>
 
-            {workspaceTab !== 'FINANCEIRO' ? (
+            {workspaceTab === 'GERAL' && (
+              <div className="grid gap-4 lg:grid-cols-[1.1fr_0.9fr]">
+                <div className={cn('rounded-2xl border p-5', workspaceInfo.className)}>
+                  <p className="text-lg font-semibold">{workspaceInfo.title}</p>
+                  <p className="mt-2 text-sm text-muted-foreground">{workspaceInfo.description}</p>
+                  <div className="mt-5 grid gap-2 sm:grid-cols-2 xl:grid-cols-4">
+                    <Mini label="Total da fatura" value={fmt(invoiceStats.total)} strong />
+                    <Mini label="Empresa" value={String(invoiceStats.empresa)} />
+                    <Mini label="Pessoal" value={String(invoiceStats.pessoal)} />
+                    <Mini label="Reembolsos" value={fmt(invoiceStats.reimbursementPending)} strong />
+                  </div>
+                </div>
+                <div className="rounded-2xl border bg-card p-5">
+                  <p className="font-semibold">Como trabalhar esta fatura</p>
+                  <div className="mt-4 space-y-3 text-sm text-muted-foreground">
+                    <p><strong className="text-foreground">Pessoal:</strong> organize compras pessoais e solicite reembolso somente quando a compra for da empresa.</p>
+                    <p><strong className="text-foreground">Empresa:</strong> classifique despesas empresariais com categoria da empresa.</p>
+                    <p><strong className="text-foreground">Reembolsos:</strong> acompanhe o que saiu de cartão pessoal e precisa ser validado.</p>
+                    <p><strong className="text-foreground">Financeiro:</strong> etapa final para converter apenas itens prontos em transações.</p>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {workspaceTab !== 'FINANCEIRO' && workspaceTab !== 'GERAL' ? (
               <>
             <div className="grid gap-2 lg:grid-cols-[1fr_repeat(4,180px)]">
               <div className="relative flex-1">
@@ -1341,7 +1367,7 @@ export function CreditCardInvoicesView() {
               </table>
             </div>
               </>
-            ) : (
+            ) : workspaceTab === 'FINANCEIRO' ? (
               <PreviewTransactionsPanel
                 groups={previewGroups}
                 categorySummary={previewCategorySummary}
@@ -1352,7 +1378,7 @@ export function CreditCardInvoicesView() {
                 onConvert={convertSelectedItems}
                 isConverting={convertItems.isPending}
               />
-            )}
+            ) : null}
               </>
             )}
           </CardContent>
