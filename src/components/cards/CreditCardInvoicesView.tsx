@@ -70,8 +70,7 @@ const fmt = (value: number) => value.toLocaleString('pt-BR', { style: 'currency'
 
 type SortKey = 'date' | 'description' | 'card' | 'scope' | 'category' | 'client' | 'amount' | 'conversion';
 type SortDirection = 'asc' | 'desc';
-type WorkflowStep = 'manage' | 'preview' | 'finance';
-type CardViewMode = 'ALL' | 'PESSOAL' | 'EMPRESA' | 'FINANCEIRO';
+type CardWorkspaceTab = 'GERAL' | 'PESSOAL' | 'EMPRESA' | 'REEMBOLSOS' | 'FINANCEIRO';
 type MerchantRule = {
   merchantKey: string;
   label: string;
@@ -100,8 +99,7 @@ export function CreditCardInvoicesView() {
   const [scopeFilter, setScopeFilter] = useState('ALL');
   const [conversionFilter, setConversionFilter] = useState('ALL');
   const [groupByMerchant, setGroupByMerchant] = useState(false);
-  const [workflowStep, setWorkflowStep] = useState<WorkflowStep>('manage');
-  const [cardViewMode, setCardViewMode] = useState<CardViewMode>('ALL');
+  const [workspaceTab, setWorkspaceTab] = useState<CardWorkspaceTab>('GERAL');
   const [collapsedMerchantGroups, setCollapsedMerchantGroups] = useState<Set<string>>(new Set());
   const [merchantRuleDialogItem, setMerchantRuleDialogItem] = useState<CreditCardInvoiceItem | null>(null);
   const [merchantRuleCategoryId, setMerchantRuleCategoryId] = useState('');
@@ -228,9 +226,10 @@ export function CreditCardInvoicesView() {
     const text = search.trim().toLowerCase();
     return items.filter(item => {
       if (selectedCardKeys.size > 0 && !selectedCardKeys.has(cardKey(item))) return false;
-      if (cardViewMode === 'PESSOAL' && item.usage_scope !== 'PESSOAL') return false;
-      if (cardViewMode === 'EMPRESA' && item.usage_scope !== 'EMPRESA') return false;
-      if (cardViewMode === 'FINANCEIRO' && !(item.usage_scope === 'EMPRESA' && item.conversion_status !== 'CONVERTIDO' && item.conversion_status !== 'IGNORADO')) return false;
+      if (workspaceTab === 'PESSOAL' && item.usage_scope !== 'PESSOAL') return false;
+      if (workspaceTab === 'EMPRESA' && item.usage_scope !== 'EMPRESA') return false;
+      if (workspaceTab === 'REEMBOLSOS' && item.reimbursement_status !== 'PENDENTE') return false;
+      if (workspaceTab === 'FINANCEIRO' && !(item.usage_scope === 'EMPRESA' && item.conversion_status !== 'CONVERTIDO' && item.conversion_status !== 'IGNORADO')) return false;
       if (scopeFilter !== 'ALL' && item.usage_scope !== scopeFilter) return false;
       if (conversionFilter !== 'ALL' && item.conversion_status !== conversionFilter) return false;
       if (!text) return true;
@@ -244,7 +243,7 @@ export function CreditCardInvoicesView() {
         item.recurring_clients?.name?.toLowerCase().includes(text)
       );
     });
-  }, [items, search, selectedCardKeys, scopeFilter, conversionFilter, cardViewMode]);
+  }, [items, search, selectedCardKeys, scopeFilter, conversionFilter, workspaceTab]);
 
   const visibleItems = useMemo(
     () => sortItems(filteredItems, sortKey, sortDirection),
@@ -276,6 +275,7 @@ export function CreditCardInvoicesView() {
   const previewGroups = useMemo(() => groupItemsByCard(previewItems), [previewItems]);
   const previewCategorySummary = useMemo(() => groupItemsByCategory(previewItems), [previewItems]);
   const categorySummary = useMemo(() => groupItemsByCategory(visibleItems), [visibleItems]);
+  const workspaceInfo = useMemo(() => getWorkspaceTabInfo(workspaceTab, invoiceStats, readyItems.length), [workspaceTab, invoiceStats, readyItems.length]);
 
   const handleFile = async (file: File) => {
     try {
@@ -478,6 +478,23 @@ export function CreditCardInvoicesView() {
     }
     setCardProfileDialog(null);
   };
+  const ignoreCurrentCardInInvoice = async () => {
+    if (!cardProfileDialog) return;
+    const targetKey = buildCreditCardProfileKey(cardProfileDialog.cardName, cardProfileDialog.finalDigits);
+    const ids = items
+      .filter(item => buildCreditCardProfileKey(item.card_name, item.card_final_digits) === targetKey)
+      .map(item => item.id);
+    if (ids.length === 0) return;
+    await bulkUpdate.mutateAsync({
+      ids,
+      updates: {
+        usage_scope: 'DUVIDA',
+        conversion_status: 'IGNORADO',
+        reimbursement_status: 'NAO_APLICA',
+      },
+    });
+    setCardProfileDialog(null);
+  };
 
   const exportParsedCards = () => {
     if (!parsed || selectedParsedCards.length === 0) return;
@@ -634,6 +651,27 @@ export function CreditCardInvoicesView() {
     });
   };
 
+  const requestReimbursementForSelected = () => {
+    if (selectedItems.size === 0) return;
+    if (!ramosClient?.id) {
+      toast.error('Cliente Ramos Engenharia não encontrado. Cadastre ou mantenha um cliente com "Ramos" no nome para solicitar reembolso.');
+      return;
+    }
+    bulkUpdate.mutate({
+      ids: Array.from(selectedItems),
+      updates: {
+        usage_scope: 'EMPRESA',
+        conversion_status: 'NAO_SELECIONADO',
+        reimbursement_status: 'PENDENTE',
+        cliente_id: ramosClient.id,
+      },
+    }, {
+      onSuccess: () => {
+        setSelectedItems(new Set());
+        setWorkspaceTab('REEMBOLSOS');
+      },
+    });
+  };
   const applySavedMerchantRules = async () => {
     if (suggestedItems.length === 0) {
       toast.info('Nenhum padrão salvo encontrado para os itens visíveis.');
@@ -1037,99 +1075,31 @@ export function CreditCardInvoicesView() {
               </div>
             )}
 
-            <div className="grid gap-2 rounded-2xl border bg-muted/20 p-2 md:grid-cols-4">
-              <Button
-                variant={cardViewMode === 'ALL' ? 'default' : 'ghost'}
-                onClick={() => setCardViewMode('ALL')}
-                className="justify-start"
-              >
+            <div className="grid gap-2 rounded-2xl border bg-muted/20 p-2 md:grid-cols-5">
+              <Button variant={workspaceTab === 'GERAL' ? 'default' : 'ghost'} onClick={() => setWorkspaceTab('GERAL')} className="justify-start">
                 <Layers3 className="mr-2 h-4 w-4" />
                 Geral
               </Button>
-              <Button
-                variant={cardViewMode === 'PESSOAL' ? 'default' : 'ghost'}
-                onClick={() => {
-                  setCardViewMode('PESSOAL');
-                  setWorkflowStep('manage');
-                }}
-                className="justify-start"
-              >
+              <Button variant={workspaceTab === 'PESSOAL' ? 'default' : 'ghost'} onClick={() => setWorkspaceTab('PESSOAL')} className="justify-start">
                 <CreditCard className="mr-2 h-4 w-4" />
                 Pessoal
               </Button>
-              <Button
-                variant={cardViewMode === 'EMPRESA' ? 'default' : 'ghost'}
-                onClick={() => setCardViewMode('EMPRESA')}
-                className="justify-start"
-              >
+              <Button variant={workspaceTab === 'EMPRESA' ? 'default' : 'ghost'} onClick={() => setWorkspaceTab('EMPRESA')} className="justify-start">
                 <Tags className="mr-2 h-4 w-4" />
                 Empresa
               </Button>
-              <Button
-                variant={cardViewMode === 'FINANCEIRO' ? 'default' : 'ghost'}
-                onClick={() => {
-                  setCardViewMode('FINANCEIRO');
-                  setWorkflowStep('finance');
-                }}
-                className="justify-start"
-              >
-                <Eye className="mr-2 h-4 w-4" />
+              <Button variant={workspaceTab === 'REEMBOLSOS' ? 'default' : 'ghost'} onClick={() => setWorkspaceTab('REEMBOLSOS')} className="justify-start">
+                <ArrowRightCircle className="mr-2 h-4 w-4" />
+                Reembolsos
+              </Button>
+              <Button variant={workspaceTab === 'FINANCEIRO' ? 'default' : 'ghost'} onClick={() => setWorkspaceTab('FINANCEIRO')} className="justify-start">
+                <CheckCircle2 className="mr-2 h-4 w-4" />
                 Financeiro
               </Button>
             </div>
 
-            <div className="grid gap-2 rounded-2xl border bg-muted/20 p-2 md:grid-cols-3">
-              <Button
-                variant={workflowStep === 'manage' ? 'default' : 'ghost'}
-                onClick={() => setWorkflowStep('manage')}
-                className="justify-start"
-              >
-                <Wand2 className="mr-2 h-4 w-4" />
-                Gerenciar e classificar
-              </Button>
-              <Button
-                variant={workflowStep === 'preview' ? 'default' : 'ghost'}
-                onClick={() => setWorkflowStep('preview')}
-                className="justify-start"
-              >
-                <Eye className="mr-2 h-4 w-4" />
-                Pré-lançamentos ({previewItems.length})
-              </Button>
-              <Button
-                variant={workflowStep === 'finance' ? 'default' : 'ghost'}
-                onClick={() => {
-                  setWorkflowStep('finance');
-                  setCardViewMode('FINANCEIRO');
-                }}
-                className="justify-start"
-              >
-                <CheckCircle2 className="mr-2 h-4 w-4" />
-                Financeiro final
-              </Button>
-            </div>
-
-            {workflowStep === 'manage' ? (
+            {workspaceTab !== 'FINANCEIRO' ? (
               <>
-            {cardViewMode !== 'PESSOAL' && (
-            <Card className="border-amber-200 bg-amber-50/60">
-              <CardContent className="flex flex-col gap-3 p-4 lg:flex-row lg:items-center lg:justify-between">
-                <div>
-                  <p className="flex items-center gap-2 font-semibold">
-                    <ArrowRightCircle className="h-4 w-4 text-amber-700" />
-                    Preparar Transações
-                  </p>
-                  <p className="text-sm text-muted-foreground">
-                    {readyItems.length} item(ns) empresariais prontos para virar despesa em aberto.
-                    {selectedReadyItems.length > 0 ? ` ${selectedReadyItems.length} selecionado(s).` : ' Sem seleção, converte todos os prontos.'}
-                  </p>
-                </div>
-                <Button onClick={convertSelectedItems} disabled={!activeInvoice || readyItems.length === 0 || convertItems.isPending}>
-                  Converter para transações
-                </Button>
-              </CardContent>
-            </Card>
-            )}
-
             <div className="grid gap-2 lg:grid-cols-[1fr_repeat(4,180px)]">
               <div className="relative flex-1">
                 <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
@@ -1181,6 +1151,11 @@ export function CreditCardInvoicesView() {
                     <BookmarkPlus className="mr-2 h-4 w-4" />
                     Salvar padrão
                   </Button>
+                  {workspaceTab === 'PESSOAL' && (
+                    <Button variant="outline" onClick={requestReimbursementForSelected} disabled={selectedItems.size === 0 || bulkUpdate.isPending}>
+                      Solicitar reembolso
+                    </Button>
+                  )}
                   <Button onClick={applyBulkChanges} disabled={selectedItems.size === 0 || bulkUpdate.isPending}>
                     Aplicar alterações
                   </Button>
@@ -1249,7 +1224,7 @@ export function CreditCardInvoicesView() {
                   Exportar selecionados
                 </Button>
               </div>
-              {cardViewMode === 'PESSOAL' && (
+              {workspaceTab === 'PESSOAL' && (
                 <div className="mt-3 rounded-2xl border border-amber-200 bg-amber-50/60 p-3">
                   <p className="text-sm font-semibold text-amber-900">Categorias pessoais</p>
                   <p className="text-xs text-amber-800/80">
@@ -1481,7 +1456,7 @@ export function CreditCardInvoicesView() {
                     <SelectContent>
                       <SelectItem value="EMPRESA">Empresa</SelectItem>
                       <SelectItem value="PESSOAL">Pessoal</SelectItem>
-                      <SelectItem value="DUVIDA">Não definido</SelectItem>
+                      <SelectItem value="DUVIDA">Misto / classificar manualmente</SelectItem>
                     </SelectContent>
                   </Select>
                 </div>
@@ -1491,6 +1466,9 @@ export function CreditCardInvoicesView() {
               </div>
               <div className="flex flex-col gap-2 sm:flex-row sm:justify-end">
                 <Button variant="outline" onClick={() => setCardProfileDialog(null)}>Cancelar</Button>
+                <Button variant="outline" onClick={ignoreCurrentCardInInvoice} disabled={bulkUpdate.isPending}>
+                  Ignorar nesta fatura
+                </Button>
                 <Button variant="outline" onClick={() => saveCardProfile(false)} disabled={upsertCardProfile.isPending}>
                   Salvar para próximas faturas
                 </Button>
@@ -1506,6 +1484,41 @@ export function CreditCardInvoicesView() {
   );
 }
 
+function getWorkspaceTabInfo(tab: CardWorkspaceTab, stats: { total: number; empresa: number; pessoal: number; duvida: number; prontos: number; convertidos: number; pendentes: number; reimbursementPending: number }, readyCount: number) {
+  if (tab === 'PESSOAL') {
+    return {
+      title: `Pessoal: ${stats.pessoal} item(ns) fora do financeiro`,
+      description: 'Use esta área para organizar gastos pessoais. Se alguma compra pessoal for da empresa, selecione e use Solicitar reembolso.',
+      className: 'border-amber-200 bg-amber-50/70',
+    };
+  }
+  if (tab === 'EMPRESA') {
+    return {
+      title: `Empresa: ${stats.empresa} item(ns) para classificar`,
+      description: 'Aqui ficam despesas empresariais. A categoria da empresa define conta e centro de custo antes do financeiro.',
+      className: 'border-emerald-200 bg-emerald-50/70',
+    };
+  }
+  if (tab === 'REEMBOLSOS') {
+    return {
+      title: `Reembolsos: ${fmt(stats.reimbursementPending)} pendente(s)`,
+      description: 'Ponte entre gastos pessoais e financeiro: revise, aplique categoria empresarial e deixe pronto antes de converter.',
+      className: 'border-orange-200 bg-orange-50/70',
+    };
+  }
+  if (tab === 'FINANCEIRO') {
+    return {
+      title: `Financeiro: ${readyCount} item(ns) pronto(s) para converter`,
+      description: 'Etapa final. Só converte itens empresariais com categoria, conta e centro de custo. Itens sem categoria ficam bloqueados.',
+      className: 'border-primary/30 bg-primary/5',
+    };
+  }
+  return {
+    title: `Geral: ${stats.pendentes} item(ns) ainda em conferência`,
+    description: 'Visão consolidada da fatura. Use as abas para separar pessoal, empresa, reembolso e financeiro sem misturar contextos.',
+    className: 'border-slate-200 bg-slate-50/80',
+  };
+}
 function SortHeader({
   label,
   sortKey,
@@ -1905,7 +1918,7 @@ function CardProfileBadge({ profile }: { profile?: CreditCardProfile }) {
   if (!profile) {
     return <Badge variant="outline" className="border-slate-200 bg-slate-50 text-slate-600">Não configurado</Badge>;
   }
-  const label = profile.usage_scope === 'EMPRESA' ? 'Cartão empresa' : profile.usage_scope === 'PESSOAL' ? 'Cartão pessoal' : 'Não definido';
+  const label = profile.usage_scope === 'EMPRESA' ? 'Cartão empresa' : profile.usage_scope === 'PESSOAL' ? 'Cartão pessoal' : 'Cartão misto';
   const className = profile.usage_scope === 'EMPRESA'
     ? 'border-emerald-200 bg-emerald-50 text-emerald-700'
     : profile.usage_scope === 'PESSOAL'
@@ -1920,7 +1933,7 @@ function CardProfileBadge({ profile }: { profile?: CreditCardProfile }) {
 }
 
 function ScopeBadge({ scope }: { scope: CreditCardInvoiceItem['usage_scope'] }) {
-  const label = scope === 'EMPRESA' ? 'Empresa' : scope === 'PESSOAL' ? 'Pessoal' : 'Dúvida';
+  const label = scope === 'EMPRESA' ? 'Empresa' : scope === 'PESSOAL' ? 'Pessoal' : 'Misto';
   const className = scope === 'EMPRESA'
     ? 'border-emerald-200 bg-emerald-50 text-emerald-700'
     : scope === 'PESSOAL'
