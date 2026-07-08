@@ -1445,7 +1445,7 @@ export function CreditCardInvoicesView() {
       </Dialog>
 
       <Dialog open={!!cardProfileDialog} onOpenChange={(open) => !open && setCardProfileDialog(null)}>
-        <DialogContent>
+        <DialogContent className="w-[calc(100vw-2rem)] max-w-3xl overflow-visible">
           <DialogHeader>
             <DialogTitle>Configurar cartão</DialogTitle>
           </DialogHeader>
@@ -1457,7 +1457,7 @@ export function CreditCardInvoicesView() {
                   Final {cardProfileDialog.finalDigits || 'não identificado'} · {cardProfileDialog.cardType || 'tipo não informado'}
                 </p>
               </div>
-              <div className="grid gap-3 sm:grid-cols-2">
+              <div className="grid gap-3 md:grid-cols-2">
                 <div>
                   <p className="mb-2 text-sm font-medium">Dono / responsável</p>
                   <Input
@@ -1491,14 +1491,14 @@ export function CreditCardInvoicesView() {
                 Essa configuração será usada nas próximas importações. Se aplicar na fatura atual, todos os itens desse cartão recebem a marcação escolhida agora.
               </div>
               <div className="flex flex-col gap-2 sm:flex-row sm:justify-end">
-                <Button variant="outline" onClick={() => setCardProfileDialog(null)}>Cancelar</Button>
-                <Button variant="outline" onClick={ignoreCurrentCardInInvoice} disabled={bulkUpdate.isPending}>
+                <Button variant="outline" className="w-full" onClick={() => setCardProfileDialog(null)}>Cancelar</Button>
+                <Button variant="outline" className="w-full" onClick={ignoreCurrentCardInInvoice} disabled={bulkUpdate.isPending}>
                   Ignorar nesta fatura
                 </Button>
-                <Button variant="outline" onClick={() => saveCardProfile(false)} disabled={upsertCardProfile.isPending}>
+                <Button variant="outline" className="w-full" onClick={() => saveCardProfile(false)} disabled={upsertCardProfile.isPending}>
                   Salvar para próximas faturas
                 </Button>
-                <Button onClick={() => saveCardProfile(true)} disabled={upsertCardProfile.isPending || bulkUpdate.isPending}>
+                <Button className="w-full" onClick={() => saveCardProfile(true)} disabled={upsertCardProfile.isPending || bulkUpdate.isPending}>
                   Salvar e aplicar nesta fatura
                 </Button>
               </div>

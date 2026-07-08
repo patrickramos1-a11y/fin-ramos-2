@@ -156,9 +156,6 @@ export function InlineLancamentoForm({ defaultMonth, defaultYear, onNeedsDedicat
     [entities]
   );
 
-  useEffect(() => {
-    if (isEntrada && entityIds.length > 0) setEntityIds([]);
-  }, [isEntrada, entityIds.length]);
 
   useEffect(() => {
     setStructuredStep(1);
@@ -269,7 +266,7 @@ export function InlineLancamentoForm({ defaultMonth, defaultYear, onNeedsDedicat
           centro_custo_id: resolution.costCenterId,
           conta_id: resolution.accountId,
           notes: notes || null,
-          entity_id: !isEntrada ? entityIds[0] || null : null,
+          entity_id: entityIds[0] || null,
           created_by_user_id: user?.id,
           status: isPaidThis ? 'PAGO' : 'EM_ABERTO',
           valor_pago: isPaidThis ? valorParcela : null,
@@ -277,7 +274,7 @@ export function InlineLancamentoForm({ defaultMonth, defaultYear, onNeedsDedicat
           origem_receita: isEntrada ? origemReceita : null,
           documento_recebimento: isEntrada ? documentoRecebimento : null,
         } as any);
-        if (!isEntrada && entityIds.length > 0 && result?.id) {
+        if (entityIds.length > 0 && result?.id) {
           await saveEntities.mutateAsync({ transactionId: result.id, entityIds });
         }
         m++;
@@ -852,8 +849,8 @@ export function InlineLancamentoForm({ defaultMonth, defaultYear, onNeedsDedicat
               </div>
             )}
 
-            {/* Entidade obrigatória apenas para despesas */}
-            {!isEntrada && (!isStructuredFlow || structuredStep === 1) && (
+            {/* Entidade: obrigatória para despesas e opcional para entradas que precisam de rastreio */}
+            {!isEntradaRecorrente && (!isStructuredFlow || structuredStep === 1) && (
               <div>
                 {ramosEntity && (
                   <div className="mb-2 grid sm:grid-cols-3 gap-2">
@@ -889,9 +886,9 @@ export function InlineLancamentoForm({ defaultMonth, defaultYear, onNeedsDedicat
                 <MultiEntitySelector
                   selectedIds={entityIds}
                   onChange={setEntityIds}
-                  label="Grupo / entidade de rastreamento *"
+                  label={`Grupo / entidade de rastreamento${entityRequired ? ' *' : ''}`}
                 />
-                {entityIds.length === 0 && (
+                {entityRequired && entityIds.length === 0 && (
                   <p className="text-[10px] text-destructive mt-1">
                     Informe se corresponde a um grupo/pessoa, ao cliente ou à própria Ramos Engenharia.
                   </p>

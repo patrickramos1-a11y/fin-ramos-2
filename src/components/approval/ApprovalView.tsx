@@ -241,6 +241,7 @@ export function ApprovalView() {
           accounts:account_id(name),
           cost_centers:cost_center_id(name),
           entity:financial_entities!transactions_entity_id_fkey(name),
+          transaction_entities(entity:financial_entities(name)),
           responsible:financial_entities!transactions_responsavel_id_fkey(name),
           fixed_expenses:fixed_expense_id(
             nome,
@@ -269,7 +270,7 @@ export function ApprovalView() {
           category_name: t.transaction_categories?.name || fx?.fx_category?.name,
           account_name: t.accounts?.name || fx?.fx_account?.name,
           cost_center_name: t.cost_centers?.name || fx?.fx_cc?.name,
-          entity_name: t.entity?.name,
+          entity_name: t.entity?.name || (t.transaction_entities || []).map((link: any) => link.entity?.name).filter(Boolean).join(', ') || undefined,
           responsible_name: t.responsible?.name,
           client_name: t.recurring_clients?.name || fx?.recurring_clients?.name,
           fixed_expense_name: fx?.nome,
